@@ -13,26 +13,128 @@
     }
     body {
       display: flex;
+      flex-direction: column;
+    }
+
+    /* ── HUD bars ──────────────────────────────────────────────────────────── */
+    #hud-top {
+      flex: 0 0 40px;
+      background: #06060d;
+      border-bottom: 1px solid rgba(60,60,130,0.4);
+      display: none;          /* toggled to 'flex' during STATE.PLAYING */
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+    }
+    #hud-bottom {
+      flex: 0 0 32px;
+      background: #06060d;
+      border-top: 1px solid rgba(60,60,130,0.4);
+      display: none;          /* toggled to 'flex' during STATE.PLAYING */
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* ── HP cluster (left side of top bar) ─────────────────────────────────── */
+    #hud-hp-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .hud-dim {
+      color: rgba(100,116,139,0.75);
+      font: bold 10px "Courier New", monospace;
+      letter-spacing: 1px;
+    }
+    #hud-hp-track {
+      width: 200px;
+      height: 12px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    #hud-hp-fill {
+      height: 100%;
+      border-radius: 3px;
+      background: #22c55e;
+      transition: width 80ms linear, background 250ms;
+    }
+    #hud-hp-text {
+      color: rgba(255,255,255,0.52);
+      font: 11px "Courier New", monospace;
+      min-width: 70px;
+    }
+
+    /* ── Char / power cluster (right side of top bar) ──────────────────────── */
+    #hud-info-group {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+    #hud-char-name {
+      font: bold 14px "Segoe UI", sans-serif;
+      letter-spacing: 1px;
+    }
+    #hud-power-name {
+      font: 12px "Courier New", monospace;
+    }
+
+    /* ── Room counter (bottom bar) ─────────────────────────────────────────── */
+    #hud-room-label {
+      font: bold 14px "Courier New", monospace;
+      color: rgba(148,163,184,0.82);
+      letter-spacing: 3px;
+      text-transform: uppercase;
+    }
+
+    /* ── Canvas wrapper ────────────────────────────────────────────────────── */
+    #canvas-wrap {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
       justify-content: center;
       align-items: center;
     }
     #gameCanvas {
       display: block;
-      width: 100%;
-      height: 100%;
-      max-width: calc(100vh * 16 / 9);
-      max-height: calc(100vw * 9 / 16);
-      image-rendering: pixelated;
+      max-width: 100%;
+      max-height: 100%;
+      aspect-ratio: 16 / 9;
     }
   </style>
 </head>
 <body>
-  <canvas id="gameCanvas" width="1280" height="720"></canvas>
+
+  <!-- HUD top bar: HP + character/power info -->
+  <div id="hud-top">
+    <div id="hud-hp-group">
+      <span class="hud-dim">HP</span>
+      <div id="hud-hp-track"><div id="hud-hp-fill"></div></div>
+      <span id="hud-hp-text">200 / 200</span>
+    </div>
+    <div id="hud-info-group">
+      <span id="hud-char-name">KAIDO</span>
+      <span id="hud-power-name">Haki</span>
+    </div>
+  </div>
+
+  <!-- Canvas wrapper: takes remaining height after HUD bars -->
+  <div id="canvas-wrap">
+    <canvas id="gameCanvas" width="1280" height="720"></canvas>
+  </div>
+
+  <!-- HUD bottom bar: floor / room counter -->
+  <div id="hud-bottom">
+    <span id="hud-room-label">Floor 1  ·  Room 1 / 1</span>
+  </div>
 
   <script src="src/constants.js"></script>
   <script src="src/characters.js"></script>
+  <script src="src/powers.js"></script>
+  <script src="src/assets.js"></script>
   <script src="src/input.js"></script>
   <script src="src/screens.js"></script>
+  <script src="src/gameplay.js"></script>
   <script src="src/main.js"></script>
 </body>
 </html>

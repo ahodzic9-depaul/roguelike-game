@@ -3,7 +3,7 @@ const CHARACTERS = [
     id:    'kaido',
     name:  'Kaido',
     title: 'King of Beasts',
-    color: COLORS.kaido,
+    color: { main: '#60a5fa', dark: '#1e3a8a', mid: '#2563eb', glow: 'rgba(96,165,250,' },
     stats: {
       hp:      200,
       damage:  25,
@@ -14,7 +14,14 @@ const CHARACTERS = [
     },
     attack: {
       name: 'Fire Breath',
-      desc: 'Short-range fire beam',
+      desc: 'Medium-range fire breath beam',
+    },
+    images: {
+      idle_down: 'assets/kaido_idle_down.jpg',
+      idle_up:   'assets/kaido_idle_up.jpg',
+      idle_side: 'assets/kaido_idle_side.jpg',
+      charge:    'assets/kaido_charge.jpg',
+      attack:    'assets/kaido_attack.jpg',
     },
     flavor: 'An unstoppable force.\nHigh HP. Measured destruction.',
   },
@@ -22,7 +29,7 @@ const CHARACTERS = [
     id:    'dio',
     name:  'Dio',
     title: 'The Vampire Lord',
-    color: COLORS.dio,
+    color: { main: '#eab308', dark: '#713f12', mid: '#ca8a04', glow: 'rgba(234,179,8,' },
     stats: {
       hp:      80,
       damage:  45,
@@ -33,15 +40,21 @@ const CHARACTERS = [
     },
     attack: {
       name: 'Knife Barrage',
-      desc: 'Arcing knives with gravity',
+      desc: 'Throws arcing knives with gravity',
+    },
+    images: {
+      idle_down: 'assets/dio_idle_down.jpg',
+      idle_up:   'assets/dio_idle_up.jpg',
+      idle_side: 'assets/dio_idle_side.jpg',
+      attack:    'assets/dio_attack.jpg',
     },
     flavor: 'It was me, Dio!\nGlass cannon. Devastating output.',
   },
   {
     id:    'levi',
     name:  'Levi',
-    title: "Humanity's Strongest",
-    color: COLORS.levi,
+    title: "Humanity's Strongest Soldier",
+    color: { main: '#4ade80', dark: '#14532d', mid: '#16a34a', glow: 'rgba(74,222,128,' },
     stats: {
       hp:      120,
       damage:  15,
@@ -52,7 +65,13 @@ const CHARACTERS = [
     },
     attack: {
       name: 'Blade Sweep',
-      desc: 'Semi-circle sword arc forward',
+      desc: 'Semi-circle sword slash',
+    },
+    images: {
+      idle_down: 'assets/levi_idle_down.jpg',
+      idle_up:   'assets/levi_idle_up.jpg',
+      idle_side: 'assets/levi_idle_side.jpg',
+      attack:    'assets/levi_attack.jpg',
     },
     flavor: 'No time to hesitate.\nLightning speed. Precision strikes.',
   },

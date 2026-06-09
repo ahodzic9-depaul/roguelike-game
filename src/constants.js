@@ -4,6 +4,7 @@ const H = 720;
 const STATE = {
   CHAR_SELECT:   'char_select',
   POWER_SELECT:  'power_select',
+  DEV_POWERS:    'dev_powers',
   PLAYING:       'playing',
   UPGRADE:       'upgrade',
   STAT_BOOST:    'stat_boost',
@@ -20,7 +21,7 @@ const COLORS = {
   dmgBar: '#ef4444',
   spdBar: '#38bdf8',
 
-  kaido: { main: '#ef4444', dark: '#7f1d1d', mid: '#b91c1c', glow: 'rgba(239,68,68,' },
-  dio:   { main: '#c084fc', dark: '#3b0764', mid: '#7c3aed', glow: 'rgba(192,132,252,' },
-  levi:  { main: '#38bdf8', dark: '#0c4a6e', mid: '#0284c7', glow: 'rgba(56,189,248,'  },
+  kaido: { main: '#60a5fa', dark: '#1e3a8a', mid: '#2563eb', glow: 'rgba(96,165,250,'  },
+  dio:   { main: '#eab308', dark: '#713f12', mid: '#ca8a04', glow: 'rgba(234,179,8,'   },
+  levi:  { main: '#4ade80', dark: '#14532d', mid: '#16a34a', glow: 'rgba(74,222,128,'  },
 };
