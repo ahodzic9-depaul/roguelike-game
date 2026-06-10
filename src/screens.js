@@ -1437,33 +1437,57 @@ function _drawKillerIcon(ctx, cx, cy, killSource, t) {
     ctx.fillRect( s*0.10, -s*0.12, s*0.18, s*0.22);
 
   } else if (killSource === 'ranged_enemy') {
-    // Teal diamond with glowing eye
-    ctx.save();
-    ctx.rotate(Math.PI / 4);
-    ctx.fillStyle = '#164e63'; ctx.fillRect(-s*0.52, -s*0.52, s*1.04, s*1.04);
-    ctx.fillStyle = '#0891b2'; ctx.fillRect(-s*0.38, -s*0.38, s*0.76, s*0.76);
-    ctx.fillStyle = '#22d3ee'; ctx.fillRect(-s*0.18, -s*0.18, s*0.36, s*0.36);
-    ctx.restore();
-    ctx.shadowColor = '#22d3ee'; ctx.shadowBlur = 12;
-    ctx.fillStyle = '#ecfeff';
-    ctx.beginPath(); ctx.arc(s*0.28, 0, s*0.16, 0, Math.PI*2); ctx.fill();
+    // Teal square archer — body + bow + arrow
+    ctx.fillStyle = '#164e63'; ctx.fillRect(-s*0.55, -s*0.55, s*1.1, s*1.1);
+    ctx.fillStyle = '#0891b2'; ctx.fillRect(-s*0.46, -s*0.46, s*0.92, s*0.92);
+    ctx.fillStyle = '#0e7490'; ctx.fillRect(-s*0.30, -s*0.30, s*0.60, s*0.60);
+    // Squinting eyes
+    ctx.fillStyle = '#ecfeff'; ctx.shadowColor = '#22d3ee'; ctx.shadowBlur = 4;
+    ctx.fillRect(-s*0.36, -s*0.22, s*0.24, s*0.10);
+    ctx.fillRect( s*0.12, -s*0.22, s*0.24, s*0.10);
+    ctx.shadowBlur = 0;
+    // Bow (vertical arc on right side, aiming right)
+    const br = s * 0.22;
+    ctx.strokeStyle = '#a5f3fc'; ctx.lineWidth = s*0.04;
+    ctx.shadowColor = '#22d3ee'; ctx.shadowBlur = 6; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.arc(s*0.18, 0, br, -Math.PI*0.6, Math.PI*0.6); ctx.stroke();
+    const sy2 = Math.sin(Math.PI*0.6)*br;
+    ctx.beginPath(); ctx.moveTo(s*0.18, -sy2); ctx.lineTo(s*0.18, sy2); ctx.stroke();
+    // Arrow
+    ctx.strokeStyle = '#fde68a'; ctx.lineWidth = s*0.03; ctx.shadowColor = '#fde68a';
+    ctx.beginPath(); ctx.moveTo(-s*0.32, 0); ctx.lineTo(s*0.24, 0); ctx.stroke();
+    ctx.fillStyle = '#fde68a';
+    ctx.beginPath(); ctx.moveTo(s*0.38, 0); ctx.lineTo(s*0.22, -s*0.1); ctx.lineTo(s*0.22, s*0.1); ctx.closePath(); ctx.fill();
     ctx.shadowBlur = 0;
 
   } else if (killSource === 'tank_enemy') {
-    // Big orange block with armor lines and angry eyes
+    // Skull — cranium + jaw + glowing eye sockets
+    // Cranium
     ctx.fillStyle = '#7c2d12';
-    ctx.beginPath(); ctx.roundRect(-s*0.58, -s*0.52, s*1.16, s*1.1, 7); ctx.fill();
-    ctx.fillStyle = '#c2410c';
-    ctx.beginPath(); ctx.roundRect(-s*0.50, -s*0.44, s*1.0, s*0.94, 5); ctx.fill();
-    ctx.fillStyle = 'rgba(0,0,0,0.22)';
-    ctx.fillRect(-s*0.42, -s*0.06, s*0.84, s*0.12);
-    ctx.fillRect(-s*0.06, -s*0.36, s*0.12, s*0.72);
-    ctx.fillStyle = '#fbbf24'; ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 5;
-    ctx.fillRect(-s*0.3,  -s*0.18, s*0.22, s*0.22);
-    ctx.fillRect( s*0.08, -s*0.18, s*0.22, s*0.22);
-    ctx.fillStyle = '#000'; ctx.shadowBlur = 0;
-    ctx.fillRect(-s*0.26, -s*0.14, s*0.14, s*0.14);
-    ctx.fillRect( s*0.12, -s*0.14, s*0.14, s*0.14);
+    ctx.beginPath(); ctx.roundRect(-s*0.52, -s*0.62, s*1.04, s*0.78, [10,10,3,3]); ctx.fill();
+    ctx.fillStyle = '#991b1b';
+    ctx.beginPath(); ctx.roundRect(-s*0.44, -s*0.56, s*0.88, s*0.66, [8,8,2,2]); ctx.fill();
+    // Jaw
+    ctx.fillStyle = '#7c2d12';
+    ctx.fillRect(-s*0.46, s*0.08, s*0.92, s*0.34);
+    ctx.fillStyle = '#6b1f0e';
+    ctx.fillRect(-s*0.38, s*0.13, s*0.76, s*0.24);
+    // Teeth
+    ctx.fillStyle = '#f5f5f4';
+    for (let i = 0; i < 3; i++) {
+      ctx.fillRect(-s*0.32 + i*s*0.22, s*0.1, s*0.16, s*0.14);
+    }
+    // Nasal cavity
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.beginPath(); ctx.moveTo(-s*0.08, s*0.04); ctx.lineTo(0, -s*0.06); ctx.lineTo(s*0.08, s*0.04); ctx.closePath(); ctx.fill();
+    // Eye sockets — glowing red
+    ctx.fillStyle = '#1c0a06';
+    ctx.beginPath(); ctx.roundRect(-s*0.42, -s*0.48, s*0.34, s*0.36, 4); ctx.fill();
+    ctx.beginPath(); ctx.roundRect( s*0.08, -s*0.48, s*0.34, s*0.36, 4); ctx.fill();
+    ctx.fillStyle = '#ef4444'; ctx.shadowColor = '#ef4444'; ctx.shadowBlur = 16;
+    ctx.beginPath(); ctx.roundRect(-s*0.40, -s*0.46, s*0.30, s*0.32, 3); ctx.fill();
+    ctx.beginPath(); ctx.roundRect( s*0.10, -s*0.46, s*0.30, s*0.32, 3); ctx.fill();
+    ctx.shadowBlur = 0;
 
   } else if (killSource === 'bomb') {
     // Dark bomb with glowing fuse

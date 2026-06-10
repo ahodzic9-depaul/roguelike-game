@@ -85,11 +85,11 @@ Power upgrade flags set by `_initUpgradeState` (via `opt.apply`):
 
 | Power | Flag set on `pow` | Upgrade effect (fully implemented) |
 |---|---|---|
-| haki | `hakiReflect = true` | Reflects 50% of incoming damage back at attacker. Blocked by Gojo's Infinity. |
-| timestop | `timestopUpgraded = true` | Cooldown reduced 10s → 6s; deals 3 DPS to frozen enemies/bosses (not Gojo) |
+| haki | `hakiReflect = true` | Reflects 75% of incoming damage back at attacker. Blocked by Gojo's Infinity. |
+| timestop | `timestopUpgraded = true` | Cooldown reduced 10s → 6s; deals 10 DPS to frozen enemies/bosses (not Gojo) |
 | ally_summon | `allyUpgraded = true` | Summons 2 allies instead of 1 |
-| spin | `spinUpgraded = true` | Dio knives pierce 1 extra enemy (tracked via `hitEnemies` Set); Levi sweep radius 130 → 162px; homing turn rate 480 → 920 |
-| king_crimson | `kcUpgraded = true` | Afterimages deal damage (35% of char damage each) to enemies/boss they overlap |
+| spin | `spinUpgraded = true` | Dio knives pierce 1 extra enemy (tracked via `hitEnemies` Set); after piercing, knife re-acquires nearest unhit enemy as new lock target. Levi sweep radius 130 → 162px; homing turn rate 480 → 920 |
+| king_crimson | `kcUpgraded = true` | Afterimages deal damage (65% of char damage each) to enemies/boss they overlap |
 | awakening | `awakeningUpgraded = true` | Floor 3 stat boost is doubled (Kaido +60% HP, Dio +60% DMG, Levi +50% SPD) |
 
 All flags also set `pw.upgraded = true`. `_initUpgradeState` uses a power-id lookup map in `main.js`.
@@ -155,11 +155,11 @@ All 6 powers are implemented with upgrades. `gp.powerState` holds runtime state.
 
 | ID            | Type    | Color   | Effect (implemented)                                                |
 |---------------|---------|---------|---------------------------------------------------------------------|
-| haki          | passive | amber   | 35% damage reduction on every hit (`dmg * 0.65`, ceiled); spiky 16-point amber polygon aura behind player; HP bar gets gold gradient + amber glow. **Upgraded**: reflects 50% of original damage back at attacker; blocked against Gojo (Infinity). |
-| timestop      | active  | violet  | Freeze all enemies **and bosses** 3s; 3 expanding ripple shockwaves; faint violet screen vignette. **Cooldown: 10s base, 6s when upgraded**. **Upgraded**: deals 3 DPS to frozen enemies and non-Gojo bosses. |
-| ally_summon   | active  | green   | Spawns allied fighter(s) near player (80HP, speed 115, damage = char.damage×0.50, 8s life); 14s cooldown. Allies **shoot projectile bullets** (320px/s, r=5, 1.4s life, 0.7s fire cooldown) from 145px standoff range instead of contact damage. **Spread targeting**: each ally claims a different nearest enemy. When no enemies, drifts toward room center. **Upgraded**: spawns 2 allies. **Against Gojo**: ally bullets only reach Gojo when `b.stunTimer > 0` (barrier down). |
-| spin          | passive | orange  | **Not offered to Kaido**. Dio knives: lock-on homing (turn rate 480, upgraded 920). Levi sweeps: auto-aims toward nearest enemy or boss. **During Gojo fight**: red ball takes priority. **Upgraded**: Dio knives pierce 1 extra enemy (`hitEnemies` Set prevents re-hitting); Levi sweep radius 130→162px. |
-| king_crimson  | active  | rose    | Dash 200px in `moveDir`; 5 afterimages along dash path; glow ring + TV scanline distortion; 5s cooldown. **Upgraded**: afterimages each deal 35% of char damage to enemies/boss they overlap (each afterimage hits each target once via `hitEnemies` Set + `hitBoss` flag). |
+| haki          | passive | amber   | 35% damage reduction on every hit (`dmg * 0.65`, ceiled); spiky 16-point amber polygon aura behind player; HP bar gets gold gradient + amber glow. **Upgraded**: reflects 75% of original damage back at attacker; blocked against Gojo (Infinity). |
+| timestop      | active  | violet  | Freeze all enemies **and bosses** 3s; 3 expanding ripple shockwaves; faint violet screen vignette. **Cooldown: 10s base, 6s when upgraded**. **Upgraded**: deals 10 DPS to frozen enemies and non-Gojo bosses. |
+| ally_summon   | active  | green   | Spawns allied fighter(s) near player (80HP, speed 115, damage = char.damage×0.65, 8s life); 14s cooldown. Allies **shoot projectile bullets** (320px/s, r=5, 1.4s life, 0.7s fire cooldown) from 145px standoff range instead of contact damage. **Spread targeting**: each ally claims a different nearest enemy. When no enemies, drifts toward room center. **Upgraded**: spawns 2 allies. **Against Gojo**: ally bullets only reach Gojo when `b.stunTimer > 0` (barrier down). |
+| spin          | passive | orange  | **Not offered to Kaido**. Dio knives: lock-on homing (turn rate 480, upgraded 920). Levi sweeps: auto-aims toward nearest enemy or boss. **During Gojo fight**: red ball takes priority. **Upgraded**: Dio knives pierce 1 extra enemy (`hitEnemies` Set prevents re-hitting); after pierce, knife re-acquires nearest unhit enemy as lock target; Levi sweep radius 130→162px. |
+| king_crimson  | active  | rose    | Dash 200px in `moveDir`; 5 afterimages along dash path; glow ring + TV scanline distortion; 5s cooldown. **Upgraded**: afterimages each deal 65% of char damage to enemies/boss they overlap (each afterimage hits each target once via `hitEnemies` Set + `hitBoss` flag). |
 | awakening     | passive | purple  | 20% crit chance via `_critDamage(base, x, y)` — crits deal 2× damage and push a `{ x, y, timer }` entry to `gp.critEffects` for a yellow starburst "CRIT!" flash at hit position (0.38s, 8-spike radiating lines + floating text). Spiky 14-point purple polygon aura; 6 orbiting particles. **Upgraded**: floor 3 stat boost multipliers doubled. |
 
 ### Spin — Gojo fight priority
@@ -183,21 +183,35 @@ When `gp.power.id === 'spin'` and a `red_ball` attack is active with `dir === 't
 Awakening's crit helper. When `gp.power.id === 'awakening'` and `Math.random() < 0.20`, returns `base * 2` and pushes `{ x, y, timer: 0.38, maxTimer: 0.38 }` to `gp.critEffects` (if coords provided). All 9 call sites pass enemy/boss center coords. `gp.critEffects` is ticked down in `_updatePowerState` and drawn in `_drawPowerEffects`.
 
 ### `_hakiReflect(origDmg, enemyRef)`
-Called at every player damage site. If `hakiReflect` flag is set: reflect = `ceil(origDmg * 0.50)`. If `enemyRef` is non-null, subtracts from that enemy's HP directly. If null (boss attack), calls `_damageBoss(reflectDmg)` — **skipped entirely when `gp.boss.type === 'gojo'`** (Infinity blocks the reflect).
+Called at every player damage site. If `hakiReflect` flag is set: reflect = `ceil(origDmg * 0.75)`. If `enemyRef` is non-null, subtracts from that enemy's HP directly. If null (boss attack), calls `_damageBoss(reflectDmg)` — **skipped entirely when `gp.boss.type === 'gojo'`** (Infinity blocks the reflect).
 
 ---
 
 ## Floor/room generation (`_generateRooms()` in gameplay.js)
 
-| Floor | Room sequence                               |
-|-------|---------------------------------------------|
-| 1     | tutorial → 2–3 combat → boss               |
-| 2     | tutorial → 3–4 combat → boss               |
-| 3     | tutorial → 0–1 combat → boss (Gojo, fixed) |
+| Floor | Room sequence                              |
+|-------|--------------------------------------------|
+| 1     | tutorial → combat → combat → combat → boss |
+| 2     | tutorial → combat → combat → combat → boss |
+| 3     | tutorial → combat → boss                   |
 
 Tutorial room: empty, controls shown on floor, door always open.
-Combat room: 3–4 enemies; door locked until all cleared.
+Combat room: scripted enemy composition (see below); door locked until all cleared.
 Boss room: boss fight.
+
+### Room compositions (scripted, not random)
+
+`_spawnEnemies()` uses `gp.roomIndex` (1-based within each floor) to select a composition:
+
+| Floor | Room | Composition |
+|-------|------|-------------|
+| 1 | 1 | 3–4 basic enemies |
+| 1 | 2 | 2–3 basic + 1 ranged |
+| 1 | 3 | ~50/50 basic and ranged (4 total, shuffled) |
+| 2 | 1 | 1 basic + 3 ranged |
+| 2 | 2 | 2 ranged + 1 tank |
+| 2 | 3 | 2 tanks |
+| 3 | 1 | 2 basic + 2 ranged + 2 tank |
 
 ---
 
@@ -206,11 +220,15 @@ Boss room: boss fight.
 ```
 ROOM = { x: 80, y: 60, w: 1120, h: 600 }
 PW=56, PH=72       // player sprite (hitbox)
-EW=46, EH=46       // basic enemy sprite
+EW=46, EH=46       // basic enemy size
+RW=40, RH=40       // ranged enemy size
+TW=58, TH=60       // tank/brute enemy size
 BW=68, BH=80       // boss hitbox (Kira, Enel, Gojo)
 DOOR_H=84          // right-wall door height, vertically centered
 BOMB_MIN_SEP=88    // minimum px between active bomb centers
 ```
+
+All enemies store their own `w` and `h` fields. All collision, targeting, and damage code uses `e.w`/`e.h` — never hardcoded `EW`/`EH` for non-basic enemies.
 
 Player is drawn at 1.7× visual scale (`VS=1.7`) centered on the hitbox; hitbox is unchanged.
 
@@ -245,12 +263,35 @@ If `gp.cinematic` is set, `drawGameplay` calls `_drawGojoCinematic(ctx, t)` and 
 
 ## Enemy system
 
-Basic enemy only (red square with yellow eyes):
-- HP: 60, Speed: 90 px/s, Damage: 12 per hit
-- Chases player directly; knocked back on hit (`knockbackTimer = 0.14s`)
-- HP bar drawn above enemy
-- Player gets 1.2s of iFrames after taking damage
-- Enemies are frozen (no movement, no damage) during Timestop
+Three enemy types, all stored in `gp.enemies[]`. Every enemy object has `type`, `w`, `h`, `hp`, `maxHp`, `speed`, `damage`, `vx`, `vy`, `knockbackTimer`. Knocked back on hit (`knockbackTimer = 0.14s`). HP bar drawn above. Player gets 1.2s iFrames after any damage. All enemies frozen during Timestop (no movement, no damage, no bullet firing/ticking).
+
+Factory: `_makeEnemy(type, x, y)` in `gameplay.js`.
+
+### Basic enemy
+- `type: 'basic'` | 46×46 | red square with yellow eyes
+- HP: 60, Speed: 90 px/s, Damage: 12
+- Chases player directly.
+- Kill source: `'enemy'`
+
+### Ranged enemy (Archer)
+- `type: 'ranged'` | 40×40 | teal square with squinting eyes + bow/arrow drawn pointing toward player
+- HP: 45, Speed: 75 px/s, Damage: 22 (projectile)
+- **Kiting AI**: maintains ~260px preferred distance. Backs away if closer than 155px; closes in if farther than 340px; strafes perpendicularly in range (strafe direction flips every 1.2–2.4s).
+- **Wind-up**: when `fireCooldown <= 0` and in range, sets `windupActive = true`, freezes movement. After `RANGED_WINDUP_DUR = 0.9s`, fires one teal orb bullet (r=7, 320px/s, 2.0s life, damage 22) into `gp.enemyBullets[]`. Resets `fireCooldown = 2.8s`.
+- **Wind-up telegraph**: center of sprite brightens with growing teal glow proportional to windup progress.
+- Kill source: `'ranged_enemy'`
+
+### Tank / Brute (Skull)
+- `type: 'tank'` | 58×60 | dark-red skull with eye sockets, jaw, and teeth
+- HP: 180, Speed: 50 px/s (walk), Damage: 35
+- **Normal state**: slow walk toward player. Countdown timer `chargeTimer` (3.5–6s) until next charge.
+- **Wind-up** (`chargeState: 'windup'`, `TANK_WINDUP_DUR = 0.65s`): stops; eye sockets slowly glow red (brightness = `windupTimer / TANK_WINDUP_DUR`). On completion, locks `chargeDir` toward player's current position.
+- **Charge** (`chargeState: 'charging'`): flies at 900px/s in locked direction until hitting a room wall. Motion trail (3 ghost images). Eye sockets fully lit red. **No time limit** — only a wall stops it.
+- **Stagger/recovery** (`chargeState: 'recovery'`, `TANK_RECOVERY_DUR = 0.8s`): brief dazed pause after wall impact; eyes dark, teeth gray.
+- Kill source: `'tank_enemy'`
+
+### `gp.enemyBullets[]`
+Separate top-level array (like `gp.bossAttacks[]`) for ranged enemy projectiles. Cleared on room transition and in `_launchDevBossFight`. Ticked in `_tickEnemyBullets(p, dt)` — skipped entirely when Timestop is active. Bullet fields: `x, y, vx, vy, r, damage, life`.
 
 ---
 
@@ -333,6 +374,8 @@ Boss sprites drawn at 1.8× hitbox size (`contain` fit, centered on hitbox cente
 | Kill source | Background | Accent | Label | Death message |
 |---|---|---|---|---|
 | `enemy` | `#0d0404` | `#7f1d1d` | Basic Enemy | "You were killed by a basic enemy. No comment." |
+| `ranged_enemy` | `#021014` | `#0891b2` | Ranged Enemy | "Didn't you hear? It's hunting season! Shouldda kept your head low..." |
+| `tank_enemy` | `#140600` | `#ea580c` | Tank/Brute | "He smashed you like a bug. Next time get out of his way." |
 | `bomb` | `#080416` | `#7c3aed` | Kira's Bomb | "Killer Queen has already touched that spot..." |
 | `sha` | `#080416` | `#7c3aed` | Sheer Heart Attack | "Sheer Heart Attack... has no weakness." |
 | `kira_contact` | `#080416` | `#7c3aed` | Kira | "Bites the Dust has reset time... back to the title screen!" |
@@ -359,7 +402,7 @@ Kira deaths are **purple** (`#7c3aed`). Enel deaths are **light blue** (`#7dd3fc
 - `hollow_purple` / `barrier_purple` → `purple_ball.png` → `gojo.png`
 - `red_ball` → `red_ball.png` → `gojo.png`
 - `void` / `gojo_contact` → `gojo.png`
-- `enemy` → canvas fallback only
+- `enemy` / `ranged_enemy` / `tank_enemy` → canvas fallback only (no PNG)
 
 ---
 
@@ -384,14 +427,19 @@ All boss logic lives in `gameplay.js`. `gp.boss` holds the active boss object; `
 ### Dev skip room
 Left-side purple door on the **first tutorial room only** (`gp.floor === 1 && gp.roomIndex === 0`) → `gp.devBossSelect = true` → full-screen boss picker. The dev door does **not** appear on floors 2 or 3. Clicking a boss calls `_launchDevBossFight(type)`.
 
-**`_launchDevBossFight(bossType)`** sets `gp.floor` correctly: kira → 1, enel → 2, gojo → 3. This ensures all floor-dependent logic (cinematic, post-boss messages, floorComplete path) works during dev testing.
+**`_launchDevBossFight(bossType)`** sets `gp.floor` correctly: kira → 1, enel → 2, gojo → 3. Also **silently applies upgrades** matching what the player would have by that floor:
+- **Kira**: no upgrades (fresh stats)
+- **Enel**: calls `_applyDevPowerUpgrade()` — sets the power's upgrade flag and re-inits `gp.powerState` (so e.g. Timestop gets `cooldownMax: 6` immediately)
+- **Gojo**: calls `_applyDevPowerUpgrade()` + `_applyDevStatBoost()` — applies character-specific stat boost (Kaido +30% HP, Dio +30% DMG, Levi +25% SPD, all with full HP restore; doubled if Awakening is upgraded)
+
+This ensures all floor-dependent logic (cinematic, post-boss messages, floorComplete path) works during dev testing.
 
 **Dev boss select lineup**: Kira (Floor 1), Enel (Floor 2), Gojo (Floor 3).
 
 **Ending Animation button** — A **"▶ Ending Animation"** button appears below the Gojo card in `_drawDevBossSelect`. Clicking it sets `gp.devCinematicPicker = true` and opens a character sub-picker (Kaido / Dio / Levi). Clicking a character calls `_launchDevCinematic(charId)`, which sets `gp.char`, spawns a dead Gojo boss, and calls `_startGojoCinematic()` directly — no fight required. `_CIN_CHARS` is the array driving the sub-picker.
 
 **Death Screens button** — A **"☠ Death Screens"** button appears in a paired row below all boss cards (see Credits button below). Clicking it sets `gp.devDeathScreen = true` and opens the death screen browser:
-- 4 columns: **Kira Deaths** (bomb, sha, kira_contact), **Enel Deaths** (beam, grid, enel_contact), **Gojo Deaths** (hollow_purple, blue_orb, red_ball, void, barrier_purple, gojo_contact), **Common Deaths** (enemy)
+- 4 columns: **Kira Deaths** (bomb, sha, kira_contact), **Enel Deaths** (beam, grid, enel_contact), **Gojo Deaths** (hollow_purple, blue_orb, red_ball, void, barrier_purple, gojo_contact), **Common Deaths** (enemy, ranged_enemy, tank_enemy)
 - Clicking any source sets `gp.devDeathPreview = { source, startT: t - 1000 }` (startT offset so it renders fully opaque immediately)
 - While `gp.devDeathPreview` is set: `_drawDevBossSelect` renders `drawGameOverScreen` over everything using `gp.char` as the character. ESC dismisses back to the browser.
 - ESC from browser → back to main boss select. ESC from boss select also clears `devDeathScreen` and `devDeathPreview`.
@@ -643,16 +691,16 @@ _drawRoom → _drawBossAttacks → _drawEnemies → _drawBoss → _drawGojoIT (G
 - **Spin trail in `_drawProjectiles`**: bee-path looping trail drawn per-knife before the blade shape. Trail history (28 pts) stored on `proj.trail[]`. Phase is index-only (no world-time offset) so loops stay spatially fixed.
 - **Spin lock-on at fire time**: nearest enemy/boss (or red ball, if active) found once when knife spawns. Never re-acquired — if target dies/done, knife flies straight.
 - **Spin red ball priority**: `gp.bossAttacks.find(a => a.type === 'red_ball' && !a.done && a.dir === 'toward_player')` is checked first. Only falls back to enemy/boss if no active incoming red ball.
-- **Spin pierce uses `hitEnemies` Set**: piercing knives (`piercesLeft > 0`) track already-hit enemies in `proj.hitEnemies` to prevent re-hitting the same enemy on consecutive frames as the knife passes through.
+- **Spin pierce uses `hitEnemies` Set**: piercing knives (`piercesLeft > 0`) track already-hit enemies in `proj.hitEnemies` to prevent re-hitting the same enemy on consecutive frames as the knife passes through. After each pierce, the knife immediately re-acquires the nearest enemy not in `hitEnemies` as its new `lockTarget` (only when `lockType === 'enemy'`). If no unhit enemy exists, `lockTarget` is nulled and the knife flies straight.
 - **Dio knives fly straight normally**: `proj.vy += GRAVITY * dt` gated on `proj.type !== 'knife' || proj.bounced`. Bounced knives (barrier hit) enable gravity and get a fast negative `spinRate` for visual backspin.
 - **Levi sweep hitbox expanded by target half-size**: enemies (23px), boss (40px), SHA (21px) each use their own half-size value.
 - **Levi red ball check uses `sw.r`**: `_gojoRedHitByPlayer` computes `arcInner = swR * 0.22`, `arcOuter = swR * 0.94` from `sw.r` because the sweep object does not store those fields. This also works when `sw.r = 162` (upgraded Spin).
 - **`pickPowers(charId)`**: excludes Spin from Kaido's pool.
-- **King Crimson multiple afterimages**: 5 afterimages along dash vector with random jitter. Upgraded: each afterimage has `damage` (35% char damage), `hitEnemies` Set, and `hitBoss` flag to deal damage once per target.
+- **King Crimson multiple afterimages**: 5 afterimages along dash vector with random jitter. Upgraded: each afterimage has `damage` (65% char damage), `hitEnemies` Set, and `hitBoss` flag to deal damage once per target.
 - **Awakening crits record position**: `_critDamage(base, x, y)` takes optional enemy/boss center coords and pushes `{ x, y, timer: 0.38, maxTimer: 0.38 }` to `gp.critEffects`. Ticked in `_updatePowerState`, drawn in `_drawPowerEffects` as an 8-spike yellow starburst with "CRIT!" text that rises and fades.
-- **Haki reflect blocks Gojo**: `_hakiReflect` skips the `_damageBoss` call entirely when `gp.boss.type === 'gojo'`. Reflects 50% of original (pre-reduction) damage.
-- **Timestop upgrade is cooldown reduction**: `_initPowerState` reads `power.timestopUpgraded` and sets `cooldownMax: 6` (vs 10). Duration stays 3s. Upgraded also adds 3 DPS freeze tick to enemies and non-Gojo bosses.
-- **Ally behavior is projectile-based**: allies shoot green orb bullets (320px/s, r=5, 1.4s life, 0.7s fire cooldown) from ~145px standoff range. No contact damage. Spread targeting assigns each ally a different nearest unclaimed enemy. Allies with no target drift slowly toward room center.
+- **Haki reflect blocks Gojo**: `_hakiReflect` skips the `_damageBoss` call entirely when `gp.boss.type === 'gojo'`. Reflects 75% of original (pre-reduction) damage.
+- **Timestop upgrade is cooldown reduction**: `_initPowerState` reads `power.timestopUpgraded` and sets `cooldownMax: 6` (vs 10). Duration stays 3s. Upgraded also adds 10 DPS freeze tick to enemies and non-Gojo bosses.
+- **Ally behavior is projectile-based**: allies shoot green orb bullets (320px/s, r=5, 1.4s life, 0.7s fire cooldown) from ~145px standoff range. No contact damage. Damage = char.damage × 0.65. Spread targeting assigns each ally a different nearest unclaimed enemy. Allies with no target drift slowly toward room center.
 - **Boss room not auto-cleared**: `_checkRoomClear` returns early if `gp.boss && !gp.bossDefeated`.
 - **`gp.bossAttacks[]` separate from `gp.enemies[]`**: boss attacks bypass Timestop enemy freeze; Timestop freezes bosses via early return in their update functions.
 - **Boss door skull icon**: `_drawSkullIcon` is a standalone helper used by `_drawRoom`.
@@ -707,10 +755,18 @@ _drawRoom → _drawBossAttacks → _drawEnemies → _drawBoss → _drawGojoIT (G
 - **Bomb non-overlap via `_placeBomb`**: enforces `BOMB_MIN_SEP = 88px` between active bomb centers.
 - **SHA does not rotate**: slides directly toward player with no spin transform.
 - **SHA destroyed vs. player-killed explosion**: `playerKill = false` when player attack kills SHA (visual only); `true` when SHA reaches player (40-damage large explosion).
-- **Kill source tracking**: `gp.killSource` (string) is set alongside every `gp.gameOver = true` assignment. Values: `'enemy'`, `'bomb'`, `'sha'`, `'kira_contact'`, `'beam'`, `'grid'`, `'enel_contact'`, `'void'`, `'gojo_contact'`, `'hollow_purple'`, `'blue_orb'`, `'red_ball'`, `'barrier_purple'`. Read by `main.js` when transitioning to `STATE.GAME_OVER`.
+- **Kill source tracking**: `gp.killSource` (string) is set alongside every `gp.gameOver = true` assignment. Values: `'enemy'`, `'ranged_enemy'`, `'tank_enemy'`, `'bomb'`, `'sha'`, `'kira_contact'`, `'beam'`, `'grid'`, `'enel_contact'`, `'void'`, `'gojo_contact'`, `'hollow_purple'`, `'blue_orb'`, `'red_ball'`, `'barrier_purple'`. Kill source for enemy contact uses `e.type` to dispatch. Read by `main.js` when transitioning to `STATE.GAME_OVER`.
 - **Game over is a dedicated state**: `gp.gameOver = true` causes `main.js` (PLAYING case) to immediately save `gp.char` + `gp.killSource`, then transition to `STATE.GAME_OVER`. `drawGameplay` is still called from STATE.GAME_OVER to render the frozen scene; `drawGameOverScreen` overlays on top with a 700ms fade-in.
 - **Death screen portrait uses `Assets.drawSprite`**: player portrait calls `Assets.drawSprite(ctx, char, 'idle', 'down', ..., 'contain')` — uses the idle_down PNG, falls back to the canvas portrait functions via `_drawSpriteFallback` automatically.
 - **Death screen killer uses attack-specific PNG**: each kill source tries its own PNG first (e.g., `bomb.png`, `sheer_heart_attack.png`, `lightning.png`, `blue_orb.png`, `purple_ball.png`, `red_ball.png`), falls back to the boss PNG, then to `_drawKillerIcon` canvas drawing for enemy.
 - **Credits screen is scrolling, not static**: `drawCreditsScreen(ctx, t, startT)` takes a `startT` timestamp set by `main.js` when entering `STATE.CREDITS`. Portraits of all 6 characters scroll inline as `portrait_row` items (244×272px, three across). Ending sequence: bare starfield + "Thanks for Playing!" fades in 0.5s after scroll ends, "Press ENTER" fades in 1s later.
 - **UPGRADE screen is a single confirmation, not a 3-card choice**: shows the power's own `upgrade` description text. Always grants full HP heal. Sets power-specific flags for future gameplay use.
 - **Auto-pause on focus loss**: `document.addEventListener('visibilitychange', ...)` and `window.addEventListener('blur', ...)` both call `_autoPause()` in `main.js`, which calls `_paused = true` if `_canPause()` returns true. `_canPause()` checks `currentState === STATE.PLAYING` in addition to the game state guards.
+- **All enemies have `w`/`h` fields**: set by `_makeEnemy`. All collision, targeting, and knockback code uses `e.w`/`e.h`. Never use hardcoded `EW`/`EH` when iterating over `gp.enemies` — different types have different sizes.
+- **`gp.enemyBullets[]` is a flat separate array**: ranged enemy bullets live here, not on the enemy object. This matches the pattern of `gp.bossAttacks[]` and survives the dead-enemy filter. Cleared on room transition and in `_launchDevBossFight`.
+- **Ranged enemy kite logic**: preferred distance 260px. Backs away (<155px), strafes in range (155–340px), closes in (>340px). Strafe direction flips on a 1.2–2.4s timer. Movement stops entirely during the 0.9s wind-up. Fire cooldown resets to 2.8s after each shot.
+- **Tank charge is wall-terminated, not time-terminated**: `TANK_CHARGE_SPD = 900px/s` and no `chargeDur` tracking. The charge continues until `e.x`/`e.y` is clamped by the room boundary. On wall contact, transitions to `'recovery'` (stagger, 0.8s). `chargeTimer` resets to 3.5–6s after recovery.
+- **Tank charge direction is locked at windup end**: `chargeDir` is computed from player position when `windupTimer >= TANK_WINDUP_DUR`. Player position changes during the charge do not affect the trajectory.
+- **Floor room layout is now fixed**: `_generateRooms` returns deterministic room arrays — always 3 combat rooms for floors 1/2, always 1 for floor 3. `_spawnEnemies` uses `gp.roomIndex` to select a scripted composition rather than a random count.
+- **Dev boss auto-upgrades**: `_applyDevPowerUpgrade()` and `_applyDevStatBoost()` are standalone helpers in `gameplay.js` that mirror the `_initUpgradeState`/`_initStatBoostState` logic from `main.js`. Called from `_launchDevBossFight` based on the target floor.
+- **Ranged enemy bow rendering**: bow is drawn in a saved ctx rotated to `angle` (toward player), translated `e.w * 0.65` outward from enemy center so it clears the body. `bowR = e.w * 0.48`. Arc opens in local +X (toward player), arrowhead tip at local +X; string at x=0 faces back toward the archer. `_drawKillerIcon` fallback for `ranged_enemy` mirrors the same bow geometry at icon scale.

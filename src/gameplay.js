@@ -16,9 +16,8 @@ const RANGED_BULLET_SPD   = 320;
 
 // Tank enemy AI constants
 const TANK_WINDUP_DUR     = 0.65;
-const TANK_CHARGE_SPD     = 360;
-const TANK_CHARGE_DUR     = 0.55;
-const TANK_RECOVERY_DUR   = 0.45;
+const TANK_CHARGE_SPD     = 900;
+const TANK_RECOVERY_DUR   = 0.8;
 
 // Door is always on the right wall, vertically centered
 const DOOR_H = 84;
@@ -449,14 +448,14 @@ function _drawRoom(ctx) {
 function _makeEnemy(type, x, y) {
   const base = { x, y, vx: 0, vy: 0, knockbackTimer: 0 };
   if (type === 'ranged') {
-    return { ...base, type: 'ranged', w: RW, h: RH, hp: 45, maxHp: 45, speed: 75, damage: 15,
+    return { ...base, type: 'ranged', w: RW, h: RH, hp: 45, maxHp: 45, speed: 75, damage: 22,
              fireCooldown: 1.5 + Math.random() * 1.0, windupActive: false, windupTimer: 0,
              strafeDir: Math.random() < 0.5 ? 1 : -1, strafeTimer: 1.0 + Math.random() };
   }
   if (type === 'tank') {
-    return { ...base, type: 'tank', w: TW, h: TH, hp: 180, maxHp: 180, speed: 50, damage: 22,
+    return { ...base, type: 'tank', w: TW, h: TH, hp: 180, maxHp: 180, speed: 50, damage: 35,
              chargeState: null, chargeTimer: 3.5 + Math.random() * 2.5,
-             chargeDir: { x: 0, y: 0 }, windupTimer: 0, chargeDur: 0, recoveryTimer: 0 };
+             chargeDir: { x: 0, y: 0 }, windupTimer: 0, recoveryTimer: 0 };
   }
   return { ...base, type: 'basic', w: EW, h: EH, hp: 60, maxHp: 60, speed: 90, damage: 12 };
 }
@@ -546,13 +545,11 @@ function _updateTankEnemy(e, pcx, pcy, dt) {
       const dx = pcx-(e.x+e.w/2), dy = pcy-(e.y+e.h/2);
       const dist = Math.sqrt(dx*dx+dy*dy) || 1;
       e.chargeDir = { x: dx/dist, y: dy/dist };
-      e.chargeDur = 0; e.chargeState = 'charging';
+      e.chargeState = 'charging';
     }
   } else if (e.chargeState === 'charging') {
     e.x += e.chargeDir.x * TANK_CHARGE_SPD * dt;
     e.y += e.chargeDir.y * TANK_CHARGE_SPD * dt;
-    e.chargeDur += dt;
-    if (e.chargeDur >= TANK_CHARGE_DUR) { e.chargeState = 'recovery'; e.recoveryTimer = 0; }
   } else if (e.chargeState === 'recovery') {
     e.recoveryTimer += dt;
     if (e.recoveryTimer >= TANK_RECOVERY_DUR) {
@@ -560,7 +557,7 @@ function _updateTankEnemy(e, pcx, pcy, dt) {
     }
   }
 
-  // Wall clamp — end charge early on wall contact
+  // Wall clamp — wall hit ends the charge (stagger)
   const px = e.x, py = e.y;
   e.x = Math.max(ROOM.x, Math.min(ROOM.x + ROOM.w - e.w, e.x));
   e.y = Math.max(ROOM.y, Math.min(ROOM.y + ROOM.h - e.h, e.y));
@@ -659,34 +656,59 @@ function _drawBasicEnemy(ctx, e) {
 }
 
 function _drawRangedEnemy(ctx, e, p) {
-  const cx = e.x+e.w/2, cy = e.y+e.h/2, r = e.w/2;
+  const cx = e.x+e.w/2, cy = e.y+e.h/2;
 
+  // Drop shadow
   ctx.fillStyle = 'rgba(0,0,0,0.3)';
   ctx.beginPath();
-  ctx.ellipse(cx, cy+r+4, r*0.9, 5, 0, 0, Math.PI*2);
+  ctx.ellipse(cx, e.y+e.h+4, e.w*0.42, 6, 0, 0, Math.PI*2);
   ctx.fill();
 
+  // Windup glow
   if (e.windupActive) {
     const prog = Math.min(1, e.windupTimer / RANGED_WINDUP_DUR);
     ctx.shadowColor = '#22d3ee'; ctx.shadowBlur = 8 + prog * 28;
   }
 
-  ctx.save();
-  ctx.translate(cx, cy); ctx.rotate(Math.PI / 4);
-  const dr = r * 0.84;
-  ctx.fillStyle = '#164e63'; ctx.fillRect(-dr, -dr, dr*2, dr*2);
-  ctx.fillStyle = '#0891b2'; ctx.fillRect(-dr*0.72, -dr*0.72, dr*1.44, dr*1.44);
-  ctx.fillStyle = '#22d3ee'; ctx.fillRect(-dr*0.36, -dr*0.36, dr*0.72, dr*0.72);
-  ctx.restore();
+  // Square body — teal, same structure as basic
+  ctx.fillStyle = '#164e63'; ctx.fillRect(e.x, e.y, e.w, e.h);
+  ctx.fillStyle = '#0891b2'; ctx.fillRect(e.x+3, e.y+3, e.w-6, e.h-6);
+  ctx.fillStyle = '#0e7490'; ctx.fillRect(e.x+8, e.y+8, e.w-16, e.h-16);
   ctx.shadowBlur = 0;
 
-  // "Eye" barrel pointing toward player
+  // Eyes — narrow squinting slits (archer look)
+  ctx.fillStyle = '#ecfeff'; ctx.shadowColor = '#22d3ee'; ctx.shadowBlur = 3;
+  ctx.fillRect(e.x+7, e.y+11, 10, 4);
+  ctx.fillRect(e.x+e.w-17, e.y+11, 10, 4);
+  ctx.shadowBlur = 0;
+
+  // Bow pointing toward player (drawn in local rotated space)
   const angle = Math.atan2((p.y+PH/2)-cy, (p.x+PW/2)-cx);
-  const bx = cx + Math.cos(angle)*r*0.52, by = cy + Math.sin(angle)*r*0.52;
-  ctx.fillStyle = '#ecfeff'; ctx.shadowColor = '#22d3ee'; ctx.shadowBlur = 8;
-  ctx.beginPath(); ctx.arc(bx, by, r*0.24, 0, Math.PI*2); ctx.fill();
+  const bowR = e.w * 0.48;
+  const bowOffset = e.w * 0.65;
+  ctx.save();
+  ctx.translate(cx + Math.cos(angle) * bowOffset, cy + Math.sin(angle) * bowOffset);
+  ctx.rotate(angle);
+  ctx.strokeStyle = '#a5f3fc'; ctx.lineWidth = 2;
+  ctx.shadowColor = '#22d3ee'; ctx.shadowBlur = 5;
+  ctx.lineCap = 'round';
+  // Bow arc
+  ctx.beginPath(); ctx.arc(0, 0, bowR, -Math.PI*0.6, Math.PI*0.6); ctx.stroke();
+  // Bowstring
+  const sy = Math.sin(Math.PI*0.6) * bowR;
+  ctx.beginPath(); ctx.moveTo(0, -sy); ctx.lineTo(0, sy); ctx.stroke();
+  // Arrow shaft (along aim direction, i.e. horizontal in local space)
+  ctx.strokeStyle = '#fde68a'; ctx.lineWidth = 1.5; ctx.shadowColor = '#fde68a';
+  ctx.beginPath(); ctx.moveTo(-bowR*1.1, 0); ctx.lineTo(bowR*0.35, 0); ctx.stroke();
+  // Arrowhead
+  ctx.fillStyle = '#fde68a'; ctx.shadowBlur = 3;
+  ctx.beginPath();
+  ctx.moveTo(bowR*0.5, 0); ctx.lineTo(bowR*0.15, -bowR*0.32); ctx.lineTo(bowR*0.15, bowR*0.32);
+  ctx.closePath(); ctx.fill();
   ctx.shadowBlur = 0;
+  ctx.restore();
 
+  // HP bar
   ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(e.x, e.y-10, e.w, 5);
   ctx.fillStyle = '#06b6d4'; ctx.shadowColor = '#06b6d4'; ctx.shadowBlur = 4;
   ctx.fillRect(e.x, e.y-10, e.w * Math.max(0, e.hp/e.maxHp), 5);
@@ -695,38 +717,86 @@ function _drawRangedEnemy(ctx, e, p) {
 
 function _drawTankEnemy(ctx, e) {
   const cx = e.x+e.w/2, cy = e.y+e.h/2;
+  const isCharging  = e.chargeState === 'charging';
+  const isWindup    = e.chargeState === 'windup';
+  const isRecovery  = e.chargeState === 'recovery';
+  const windupProg  = isWindup ? Math.min(1, e.windupTimer / TANK_WINDUP_DUR) : 0;
 
+  // Drop shadow
   ctx.fillStyle = 'rgba(0,0,0,0.38)';
   ctx.beginPath();
-  ctx.ellipse(cx, cy+e.h/2+5, e.w*0.46, 7, 0, 0, Math.PI*2);
+  ctx.ellipse(cx, e.y+e.h+5, e.w*0.46, 7, 0, 0, Math.PI*2);
   ctx.fill();
 
-  if (e.chargeState === 'windup') {
-    const prog = e.windupTimer / TANK_WINDUP_DUR;
-    ctx.shadowColor = '#f97316'; ctx.shadowBlur = 12 + prog * 32;
-  } else if (e.chargeState === 'charging') {
-    ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 24;
+  // Motion trail during charge
+  if (isCharging && e.chargeDir) {
+    for (let i = 3; i >= 1; i--) {
+      ctx.save();
+      ctx.globalAlpha = 0.12 * (4 - i);
+      ctx.shadowColor = '#ef4444'; ctx.shadowBlur = 10;
+      const tx = e.x - e.chargeDir.x * e.w * i * 0.55;
+      const ty = e.y - e.chargeDir.y * e.h * i * 0.55;
+      ctx.fillStyle = '#b91c1c';
+      ctx.beginPath(); ctx.roundRect(tx, ty, e.w, e.h, 8); ctx.fill();
+      ctx.restore();
+    }
   }
 
+  // Outer glow
+  if (isWindup) {
+    ctx.shadowColor = '#dc2626'; ctx.shadowBlur = 6 + windupProg * 30;
+  } else if (isCharging) {
+    ctx.shadowColor = '#ef4444'; ctx.shadowBlur = 22;
+  }
+
+  // Skull cranium
   ctx.fillStyle = '#7c2d12';
-  ctx.beginPath(); ctx.roundRect(e.x, e.y, e.w, e.h, 6); ctx.fill();
-  ctx.fillStyle = e.chargeState === 'charging' ? '#ea580c' : '#c2410c';
-  ctx.beginPath(); ctx.roundRect(e.x+3, e.y+3, e.w-6, e.h-6, 4); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(e.x+2, e.y+1, e.w-4, e.h*0.70, [9,9,3,3]); ctx.fill();
+  ctx.fillStyle = isRecovery ? '#7f1d1d' : (isCharging ? '#b91c1c' : '#991b1b');
+  ctx.beginPath(); ctx.roundRect(e.x+5, e.y+4, e.w-10, e.h*0.62, [7,7,2,2]); ctx.fill();
   ctx.shadowBlur = 0;
 
-  // Armor plating lines
-  ctx.fillStyle = 'rgba(0,0,0,0.25)';
-  ctx.fillRect(e.x+6, cy-3, e.w-12, 6);
-  ctx.fillRect(cx-3, e.y+6, 6, e.h-12);
+  // Jaw
+  const jawY = e.y + e.h * 0.64;
+  ctx.fillStyle = '#7c2d12';
+  ctx.fillRect(e.x+4, jawY, e.w-8, e.h*0.30);
+  ctx.fillStyle = '#6b1f0e';
+  ctx.fillRect(e.x+7, jawY+3, e.w-14, e.h*0.22);
 
-  // Eyes — small and close together
-  ctx.fillStyle = '#fbbf24'; ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 5;
-  ctx.fillRect(cx-13, cy-11, 9, 9); ctx.fillRect(cx+4, cy-11, 9, 9);
-  ctx.fillStyle = '#000'; ctx.shadowBlur = 0;
-  ctx.fillRect(cx-11, cy-9, 5, 5); ctx.fillRect(cx+6, cy-9, 5, 5);
+  // Teeth (3 across jaw)
+  ctx.fillStyle = isRecovery ? '#a8a29e' : '#f5f5f4';
+  const toothW = Math.floor((e.w - 20) / 3);
+  for (let i = 0; i < 3; i++) {
+    ctx.fillRect(e.x + 9 + i * (toothW + 1), jawY + 2, toothW - 1, 9);
+  }
 
+  // Nasal cavity (upside-down V)
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
+  ctx.beginPath();
+  ctx.moveTo(cx-5, e.y+33); ctx.lineTo(cx, e.y+26); ctx.lineTo(cx+5, e.y+33);
+  ctx.closePath(); ctx.fill();
+
+  // Eye sockets
+  const eyeSocketColor = '#1c0a06';
+  ctx.fillStyle = eyeSocketColor;
+  ctx.beginPath(); ctx.roundRect(cx-18, e.y+9, 15, 16, 3); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(cx+3,  e.y+9, 15, 16, 3); ctx.fill();
+
+  // Eye glow — builds during windup, fully lit when charging
+  if (isWindup || isCharging) {
+    const glowAlpha = isCharging ? 1.0 : windupProg;
+    const glowColor = `rgba(239,68,68,${glowAlpha})`;
+    ctx.fillStyle = glowColor;
+    ctx.shadowColor = '#ef4444'; ctx.shadowBlur = isCharging ? 20 : windupProg * 16;
+    ctx.beginPath(); ctx.roundRect(cx-17, e.y+10, 13, 14, 2); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(cx+4,  e.y+10, 13, 14, 2); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // HP bar
   ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(e.x, e.y-10, e.w, 5);
-  ctx.fillStyle = '#f97316'; ctx.shadowColor = '#f97316'; ctx.shadowBlur = 4;
+  ctx.fillStyle = isCharging ? '#ef4444' : '#f97316';
+  ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 4;
   ctx.fillRect(e.x, e.y-10, e.w * Math.max(0, e.hp/e.maxHp), 5);
   ctx.shadowBlur = 0;
 }
