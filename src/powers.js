@@ -16,7 +16,7 @@ const POWERS = [
     type:    'active',
     color:   { main: '#a78bfa', glow: 'rgba(167,139,250,' },
     desc:    'Briefly freezes all enemies in the room.',
-    upgrade: 'Freeze lasts longer and deals damage to all frozen enemies.',
+    upgrade: 'Reduces cooldown significantly and deals light damage to frozen enemies.',
     icon:    'clock',
   },
   {
@@ -25,7 +25,7 @@ const POWERS = [
     type:    'active',
     color:   { main: '#34d399', glow: 'rgba(52,211,153,' },
     desc:    'Summons a temporary allied fighter to battle alongside you.',
-    upgrade: 'Summons two allies, or one that is stronger and longer-lasting.',
+    upgrade: 'Summons two allies instead of one.',
     icon:    'ally',
   },
   {
@@ -34,7 +34,7 @@ const POWERS = [
     type:    'passive',
     color:   { main: '#fb923c', glow: 'rgba(251,146,60,' },
     desc:    'Your attacks gain homing, curving toward nearby enemies.',
-    upgrade: 'Homing tightens and attacks pierce through multiple enemies.',
+    upgrade: 'Homing tightens and knives pierce through additional enemies. For Levi, increases sweep radius instead.',
     icon:    'spin',
   },
   {
@@ -43,7 +43,7 @@ const POWERS = [
     type:    'active',
     color:   { main: '#f43f5e', glow: 'rgba(244,63,94,' },
     desc:    'Dash or blink forward to dodge incoming attacks.',
-    upgrade: 'Gain a second charge, or leave a damaging afterimage behind.',
+    upgrade: 'Leave damaging afterimages along the dash path that hurt any enemy they pass through.',
     icon:    'dash',
   },
   {
@@ -51,7 +51,7 @@ const POWERS = [
     name:    'Awakening',
     type:    'passive',
     color:   { main: '#e879f9', glow: 'rgba(232,121,249,' },
-    desc:    'No active utility — but all stat upgrades are far more extreme.',
+    desc:    '20% chance to crit for 2× damage on every hit. Stat upgrades are also far more extreme.',
     upgrade: 'The Floor 3 character stat boost becomes absolutely massive.',
     icon:    'burst',
   },

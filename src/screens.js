@@ -710,7 +710,7 @@ function drawCharSelect(ctx, state, t) {
   ctx.shadowColor = `rgba(168,85,247,${titlePulse})`;
   ctx.shadowBlur  = 30;
   ctx.fillStyle   = '#fff';
-  ctx.fillText('REALM OF LEGENDS', W / 2, titleY + 34);
+  ctx.fillText('CROSSOVER GAUNTLET', W / 2, titleY + 34);
   ctx.shadowBlur  = 0;
 
   ctx.font      = `17px "Segoe UI", sans-serif`;
@@ -1154,29 +1154,76 @@ function _drawFloorTransitionCards(ctx, state, t, headerText, subText) {
 }
 
 function drawUpgradeScreen(ctx, state, t) {
-  _drawFloorTransitionCards(ctx, state, t, 'FLOOR 1 CLEARED!', 'Choose a power upgrade — +50% HP restored on all options');
+  const power = state.power;
+  const col   = power.color;
+  const CX    = W / 2;
+
+  // Header
+  glowText(ctx, 'FLOOR 1 CLEARED!', CX, H / 2 - 198, '#a78bfa', 28,
+    'bold 42px "Segoe UI Black", "Arial Black", sans-serif');
+
+  // Power icon
+  Assets.drawPowerIcon(ctx, power, CX, H / 2 - 122, 48);
+
+  // Power name
+  ctx.font        = 'bold 30px "Segoe UI", sans-serif';
+  ctx.textAlign   = 'center';
+  ctx.fillStyle   = col.main;
+  ctx.shadowColor = col.main;
+  ctx.shadowBlur  = 18;
+  ctx.fillText(power.name, CX, H / 2 - 58);
+  ctx.shadowBlur  = 0;
+
+  // "POWER UPGRADED" label
+  ctx.font        = 'bold 11px "Courier New", monospace';
+  ctx.fillStyle   = COLORS.gold;
+  ctx.shadowColor = COLORS.gold;
+  ctx.shadowBlur  = 6;
+  ctx.fillText('— POWER UPGRADED —', CX, H / 2 - 34);
+  ctx.shadowBlur  = 0;
+
+  // Upgrade description panel
+  const panelW = 580, panelH = 76;
+  const panelX = CX - panelW / 2, panelY = H / 2 - 16;
+  ctx.save();
+  roundRect(ctx, panelX, panelY, panelW, panelH, 10);
+  ctx.fillStyle = `${col.glow}0.10)`;
+  ctx.fill();
+  ctx.strokeStyle = `${col.glow}0.38)`;
+  ctx.lineWidth   = 1.5;
+  roundRect(ctx, panelX, panelY, panelW, panelH, 10);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.font      = '16px "Segoe UI", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(220,215,255,0.92)';
+  wrapTextCenter(ctx, power.upgrade, CX, panelY + 30, panelW - 36, 22);
+
+  // HP restored notice
+  ctx.font        = 'bold 15px "Segoe UI", sans-serif';
+  ctx.fillStyle   = '#4ade80';
+  ctx.shadowColor = '#4ade80';
+  ctx.shadowBlur  = 10;
+  ctx.fillText('✦  HP Fully Restored  ✦', CX, panelY + panelH + 42);
+  ctx.shadowBlur  = 0;
+
+  // Continue prompt (blinking)
+  const blink = 0.55 + Math.sin(t * 0.003) * 0.35;
+  ctx.font        = 'bold 17px "Segoe UI", sans-serif';
+  ctx.fillStyle   = `rgba(255,255,255,${blink})`;
+  ctx.shadowColor = col.main;
+  ctx.shadowBlur  = blink > 0.7 ? 12 : 4;
+  ctx.fillText('Press ENTER or click to continue', CX, H - 44);
+  ctx.shadowBlur  = 0;
 }
 
 function updateUpgradeScreen(state, t) {
-  if (Input.clicked && state.hoveredCard >= 0) {
-    if (state.selectedCard === state.hoveredCard) {
-      // Confirm
-      const opt  = state.options[state.selectedCard];
-      const char = state.char;
-      const pow  = state.power;
-      opt.apply(char, pow);
-      const fullHeal = state.selectedCard === 2;  // Vitality option
-      return { char, power: pow, fullHeal };
-    }
-    state.selectedCard = state.hoveredCard;
-  }
-  if (Input.justPressed('Enter') && state.selectedCard >= 0) {
-    const opt  = state.options[state.selectedCard];
+  if (Input.clicked || Input.justPressed('Enter')) {
     const char = state.char;
     const pow  = state.power;
-    opt.apply(char, pow);
-    const fullHeal = state.selectedCard === 2;
-    return { char, power: pow, fullHeal };
+    state.options[0].apply(char, pow);
+    return { char, power: pow, fullHeal: true };
   }
   return null;
 }
@@ -1184,28 +1231,76 @@ function updateUpgradeScreen(state, t) {
 // ─── Stat Boost Screen (after Floor 2) ───────────────────────────────────────
 
 function drawStatBoostScreen(ctx, state, t) {
-  _drawFloorTransitionCards(ctx, state, t, 'FLOOR 2 CLEARED!', 'Choose a stat boost — +30% HP restored on all options');
+  const opt  = state.option;
+  const char = state.char;
+  const col  = char.color;
+  const CX   = W / 2;
+
+  glowText(ctx, 'FLOOR 2 CLEARED!', CX, H / 2 - 198, '#a78bfa', 28,
+    'bold 42px "Segoe UI Black", "Arial Black", sans-serif');
+
+  ctx.font        = 'bold 20px "Segoe UI", sans-serif';
+  ctx.textAlign   = 'center';
+  ctx.fillStyle   = col.main;
+  ctx.shadowColor = col.main;
+  ctx.shadowBlur  = 12;
+  ctx.fillText(char.name, CX, H / 2 - 148);
+  ctx.shadowBlur  = 0;
+
+  ctx.font        = 'bold 36px "Segoe UI", sans-serif';
+  ctx.fillStyle   = col.main;
+  ctx.shadowColor = col.main;
+  ctx.shadowBlur  = 22;
+  ctx.fillText(opt.label, CX, H / 2 - 90);
+  ctx.shadowBlur  = 0;
+
+  ctx.font        = 'bold 11px "Courier New", monospace';
+  ctx.fillStyle   = COLORS.gold;
+  ctx.shadowColor = COLORS.gold;
+  ctx.shadowBlur  = 6;
+  ctx.fillText('— STAT BOOSTED —', CX, H / 2 - 58);
+  ctx.shadowBlur  = 0;
+
+  const panelW = 580, panelH = 76;
+  const panelX = CX - panelW / 2, panelY = H / 2 - 40;
+  ctx.save();
+  roundRect(ctx, panelX, panelY, panelW, panelH, 10);
+  ctx.fillStyle = `${col.glow}0.10)`;
+  ctx.fill();
+  ctx.strokeStyle = `${col.glow}0.38)`;
+  ctx.lineWidth   = 1.5;
+  roundRect(ctx, panelX, panelY, panelW, panelH, 10);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.font      = '16px "Segoe UI", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(220,215,255,0.92)';
+  ctx.fillText(opt.desc, CX, panelY + 44);
+
+  const healText = '✦  HP Fully Restored  ✦';
+  ctx.font        = 'bold 15px "Segoe UI", sans-serif';
+  ctx.fillStyle   = '#4ade80';
+  ctx.shadowColor = '#4ade80';
+  ctx.shadowBlur  = 10;
+  ctx.fillText(healText, CX, panelY + panelH + 42);
+  ctx.shadowBlur  = 0;
+
+  const blink = 0.55 + Math.sin(t * 0.003) * 0.35;
+  ctx.font        = 'bold 17px "Segoe UI", sans-serif';
+  ctx.fillStyle   = `rgba(255,255,255,${blink})`;
+  ctx.shadowColor = col.main;
+  ctx.shadowBlur  = blink > 0.7 ? 12 : 4;
+  ctx.fillText('Press ENTER or click to continue', CX, H - 44);
+  ctx.shadowBlur  = 0;
 }
 
 function updateStatBoostScreen(state, t) {
-  if (Input.clicked && state.hoveredCard >= 0) {
-    if (state.selectedCard === state.hoveredCard) {
-      const opt  = state.options[state.selectedCard];
-      const char = state.char;
-      const pow  = state.power;
-      opt.apply(char, pow);
-      const fullHeal = state.selectedCard === 0;  // Max HP option restores to full
-      return { char, power: pow, fullHeal };
-    }
-    state.selectedCard = state.hoveredCard;
-  }
-  if (Input.justPressed('Enter') && state.selectedCard >= 0) {
-    const opt  = state.options[state.selectedCard];
+  if (Input.clicked || Input.justPressed('Enter')) {
     const char = state.char;
     const pow  = state.power;
-    opt.apply(char, pow);
-    const fullHeal = state.selectedCard === 0;
-    return { char, power: pow, fullHeal };
+    state.option.apply(char, pow);
+    return { char, power: pow, fullHeal: state.fullHeal };
   }
   return null;
 }
@@ -1237,9 +1332,772 @@ function drawWinScreen(ctx, t) {
 
   ctx.font      = '17px "Segoe UI", sans-serif';
   ctx.fillStyle = 'rgba(255,255,255,0.45)';
-  ctx.fillText('The Realm of Legends bows before you.', W/2, H/2 + 50);
+  ctx.fillText('The Crossover Gauntlet bows before you.', W/2, H/2 + 50);
 
   ctx.font      = '16px "Segoe UI", sans-serif';
   ctx.fillStyle = 'rgba(255,255,255,0.35)';
-  ctx.fillText('Press ENTER to play again', W/2, H/2 + 100);
+  ctx.fillText('Press ENTER — view credits', W/2, H/2 + 100);
+}
+
+// ─── Title Screen ─────────────────────────────────────────────────────────────
+
+function drawTitleScreen(ctx, t) {
+  drawBackground(ctx, t);
+
+  // Subtle vertical light column behind title
+  const col = ctx.createLinearGradient(W / 2, H * 0.1, W / 2, H * 0.85);
+  col.addColorStop(0, 'rgba(168,85,247,0)');
+  col.addColorStop(0.4, 'rgba(168,85,247,0.06)');
+  col.addColorStop(0.6, 'rgba(168,85,247,0.06)');
+  col.addColorStop(1, 'rgba(168,85,247,0)');
+  ctx.fillStyle = col;
+  ctx.fillRect(W / 2 - 260, 0, 520, H);
+
+  // Subtitle label above title
+  ctx.font      = 'bold 12px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(148,163,184,0.6)';
+  ctx.letterSpacing = '4px';
+  ctx.fillText('A  R O G U E L I K E  A D V E N T U R E', W / 2, H / 2 - 80);
+  ctx.letterSpacing = '0px';
+
+  // Thin divider lines flanking the subtitle
+  ctx.save();
+  ctx.strokeStyle = 'rgba(168,85,247,0.28)';
+  ctx.lineWidth   = 1;
+  const divY = H / 2 - 94;
+  ctx.beginPath(); ctx.moveTo(100, divY); ctx.lineTo(W / 2 - 258, divY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(W - 100, divY); ctx.lineTo(W / 2 + 258, divY); ctx.stroke();
+  ctx.restore();
+
+  // Main title — multi-layer glow
+  const pulse = 0.8 + Math.sin(t * 0.0016) * 0.2;
+  ctx.save();
+  ctx.font      = 'bold 74px "Segoe UI Black", "Arial Black", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.shadowColor = `rgba(168,85,247,${pulse * 0.5})`;
+  ctx.shadowBlur  = 60;
+  ctx.fillStyle   = 'transparent';
+  ctx.fillText('CROSSOVER GAUNTLET', W / 2, H / 2 - 14);
+  ctx.shadowColor = `rgba(200,160,255,${pulse * 0.8})`;
+  ctx.shadowBlur  = 20;
+  ctx.fillStyle   = '#fff';
+  ctx.fillText('CROSSOVER GAUNTLET', W / 2, H / 2 - 14);
+  ctx.restore();
+
+  // Press ENTER prompt — blink
+  const blink = Math.sin(t * 0.003) > 0 ? 0.95 : 0.45;
+  ctx.save();
+  ctx.font        = 'bold 20px "Segoe UI", sans-serif';
+  ctx.textAlign   = 'center';
+  ctx.fillStyle   = `rgba(255,255,255,${blink})`;
+  ctx.shadowColor = '#a78bfa';
+  ctx.shadowBlur  = blink > 0.7 ? 18 : 6;
+  ctx.fillText('PRESS  ENTER  TO  START', W / 2, H - 50);
+  ctx.restore();
+
+  // Bottom version label
+  ctx.font      = '11px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(71,85,105,0.5)';
+  ctx.fillText('v1.0', W / 2, H - 18);
+}
+
+// ─── Game Over Screen ─────────────────────────────────────────────────────────
+
+const _DEATH_DATA = {
+  enemy:          { msg: 'You were killed by a basic enemy.\nNo comment.',                                                         bg: '#0d0404', accent: '#7f1d1d', label: 'Basic Enemy'            },
+  ranged_enemy:   { msg: "Didn't you hear? It's hunting season!\nShouldda kept your head low...",                                  bg: '#021014', accent: '#0891b2', label: 'Ranged Enemy'           },
+  tank_enemy:     { msg: "He smashed you like a bug.\nNext time get out of his way.",                                             bg: '#140600', accent: '#ea580c', label: 'Tank/Brute'             },
+  bomb:           { msg: 'Killer Queen has already touched that spot...',                                                          bg: '#080416', accent: '#7c3aed', label: "Kira's Bomb"            },
+  sha:            { msg: 'Sheer Heart Attack...\nhas no weakness.',                                                                bg: '#080416', accent: '#7c3aed', label: 'Sheer Heart Attack'      },
+  kira_contact:   { msg: "Bites the Dust has reset time...\nback to the title screen!",                                           bg: '#080416', accent: '#7c3aed', label: 'Kira'                   },
+  beam:           { msg: 'You stood still for a split second\ntoo long. Enel noticed.',                                           bg: '#040d16', accent: '#7dd3fc', label: 'Lightning Beam'         },
+  grid:           { msg: 'The sky itself became your enemy.\nEnel sends his regards.',                                            bg: '#040d16', accent: '#7dd3fc', label: 'Lightning Grid'         },
+  enel_contact:   { msg: 'He sure does have a SHOCKING personality.',                                                             bg: '#040d16', accent: '#7dd3fc', label: 'Enel'                   },
+  blue_orb:       { msg: "Gravity doesn't care about\nyour feelings.",                                                            bg: '#050812', accent: '#2563eb', label: 'Blue Orb'              },
+  hollow_purple:  { msg: "You like donuts?\nWell you're one now!",                                                                bg: '#0a0414', accent: '#7c3aed', label: 'Hollow Purple'         },
+  barrier_purple: { msg: 'The Anti-Cheese System has logged your behavior.\nDo the fight correctly next time.',                   bg: '#0a0414', accent: '#7c3aed', label: 'Infinity Punishment'   },
+  red_ball:       { msg: "You didn't read the text the\nfirst time? HIT THE RED BALL!!!",                                        bg: '#130304', accent: '#dc2626', label: 'Red Volleyball'        },
+  void:           { msg: 'You were shown the entirety of the universe,\nbut your feeble mind couldn\'t handle it.',               bg: '#040010', accent: '#a78bfa', label: 'Infinite Void'         },
+  gojo_contact:   { msg: 'He killed you without even laying a finger on you.',                                                    bg: '#040010', accent: '#a78bfa', label: 'Gojo'                  },
+};
+
+function _drawKillerIcon(ctx, cx, cy, killSource, t) {
+  const s = 80; // base size unit
+  ctx.save();
+  ctx.translate(cx, cy);
+
+  if (killSource === 'enemy') {
+    // Red square enemy with yellow eyes
+    ctx.fillStyle = '#ef4444';
+    ctx.beginPath(); ctx.roundRect(-s*0.55, -s*0.55, s*1.1, s*1.1, 6); ctx.fill();
+    ctx.fillStyle = '#fbbf24';
+    ctx.fillRect(-s*0.28, -s*0.12, s*0.18, s*0.22);
+    ctx.fillRect( s*0.10, -s*0.12, s*0.18, s*0.22);
+
+  } else if (killSource === 'ranged_enemy') {
+    // Teal diamond with glowing eye
+    ctx.save();
+    ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = '#164e63'; ctx.fillRect(-s*0.52, -s*0.52, s*1.04, s*1.04);
+    ctx.fillStyle = '#0891b2'; ctx.fillRect(-s*0.38, -s*0.38, s*0.76, s*0.76);
+    ctx.fillStyle = '#22d3ee'; ctx.fillRect(-s*0.18, -s*0.18, s*0.36, s*0.36);
+    ctx.restore();
+    ctx.shadowColor = '#22d3ee'; ctx.shadowBlur = 12;
+    ctx.fillStyle = '#ecfeff';
+    ctx.beginPath(); ctx.arc(s*0.28, 0, s*0.16, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+
+  } else if (killSource === 'tank_enemy') {
+    // Big orange block with armor lines and angry eyes
+    ctx.fillStyle = '#7c2d12';
+    ctx.beginPath(); ctx.roundRect(-s*0.58, -s*0.52, s*1.16, s*1.1, 7); ctx.fill();
+    ctx.fillStyle = '#c2410c';
+    ctx.beginPath(); ctx.roundRect(-s*0.50, -s*0.44, s*1.0, s*0.94, 5); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(-s*0.42, -s*0.06, s*0.84, s*0.12);
+    ctx.fillRect(-s*0.06, -s*0.36, s*0.12, s*0.72);
+    ctx.fillStyle = '#fbbf24'; ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 5;
+    ctx.fillRect(-s*0.3,  -s*0.18, s*0.22, s*0.22);
+    ctx.fillRect( s*0.08, -s*0.18, s*0.22, s*0.22);
+    ctx.fillStyle = '#000'; ctx.shadowBlur = 0;
+    ctx.fillRect(-s*0.26, -s*0.14, s*0.14, s*0.14);
+    ctx.fillRect( s*0.12, -s*0.14, s*0.14, s*0.14);
+
+  } else if (killSource === 'bomb') {
+    // Dark bomb with glowing fuse
+    const radG = ctx.createRadialGradient(s*0.1, -s*0.1, 2, 0, 0, s*0.55);
+    radG.addColorStop(0, '#374151'); radG.addColorStop(1, '#111827');
+    ctx.fillStyle = radG;
+    ctx.beginPath(); ctx.arc(0, s*0.08, s*0.52, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#4b5563'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(0, s*0.08, s*0.52, 0, Math.PI*2); ctx.stroke();
+    // Fuse
+    const fuseFlicker = 0.7 + Math.sin(t * 0.008) * 0.3;
+    ctx.strokeStyle = '#92400e'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(s*0.18, -s*0.36); ctx.quadraticCurveTo(s*0.45, -s*0.52, s*0.3, -s*0.7); ctx.stroke();
+    ctx.fillStyle = `rgba(251,191,36,${fuseFlicker})`;
+    ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 14;
+    ctx.beginPath(); ctx.arc(s*0.3, -s*0.7, 5, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+
+  } else if (killSource === 'sha') {
+    // Triangular tank SHA
+    ctx.fillStyle = '#1f2937';
+    ctx.beginPath(); ctx.moveTo(-s*0.7, s*0.3); ctx.lineTo(s*0.7, s*0.3); ctx.lineTo(s*0.4, -s*0.2); ctx.lineTo(-s*0.4, -s*0.2); ctx.closePath(); ctx.fill();
+    // Skull face
+    ctx.fillStyle = '#e5e7eb';
+    ctx.beginPath(); ctx.arc(0, s*0.05, s*0.28, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#1f2937';
+    ctx.beginPath(); ctx.arc(-s*0.1, s*0.02, s*0.07, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc( s*0.1, s*0.02, s*0.07, 0, Math.PI*2); ctx.fill();
+    // Treads
+    ctx.fillStyle = '#374151';
+    ctx.fillRect(-s*0.7, s*0.28, s*1.4, s*0.18);
+
+  } else if (killSource === 'kira_contact') {
+    // Kira — hands-in-pockets silhouette
+    ctx.fillStyle = '#6d28d9';
+    // Body
+    ctx.beginPath(); ctx.roundRect(-s*0.3, -s*0.2, s*0.6, s*0.7, 6); ctx.fill();
+    // Head
+    ctx.beginPath(); ctx.arc(0, -s*0.42, s*0.26, 0, Math.PI*2); ctx.fill();
+    // Tie
+    ctx.fillStyle = '#c084fc';
+    ctx.beginPath(); ctx.moveTo(-s*0.05, -s*0.2); ctx.lineTo( s*0.05, -s*0.2); ctx.lineTo(s*0.03, s*0.2); ctx.lineTo(-s*0.03, s*0.2); ctx.closePath(); ctx.fill();
+    // Eyes — glowing
+    const eg = 0.6 + Math.sin(t * 0.003) * 0.4;
+    ctx.fillStyle = `rgba(196,132,252,${eg})`;
+    ctx.shadowColor = '#c084fc'; ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.ellipse(-s*0.09, -s*0.44, s*0.055, s*0.035, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse( s*0.09, -s*0.44, s*0.055, s*0.035, 0, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+
+  } else if (killSource === 'beam') {
+    // Lightning bolt
+    ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 5;
+    ctx.shadowColor = '#7dd3fc'; ctx.shadowBlur = 22;
+    ctx.beginPath();
+    ctx.moveTo(-s*0.1, -s*0.75); ctx.lineTo( s*0.25, -s*0.05);
+    ctx.lineTo(-s*0.1,  s*0.05); ctx.lineTo( s*0.2,   s*0.75);
+    ctx.stroke();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(-s*0.1, -s*0.75); ctx.lineTo( s*0.25, -s*0.05);
+    ctx.lineTo(-s*0.1,  s*0.05); ctx.lineTo( s*0.2,   s*0.75);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+  } else if (killSource === 'grid' || killSource === 'enel_contact') {
+    // Crossing lightning grid
+    const lines = [[-s*0.6, -s*0.15, s*0.6, -s*0.15], [-s*0.6, s*0.15, s*0.6, s*0.15],
+                   [-s*0.15, -s*0.6, -s*0.15, s*0.6],  [s*0.15, -s*0.6,  s*0.15, s*0.6]];
+    ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 4;
+    ctx.shadowColor = '#7dd3fc'; ctx.shadowBlur = 18;
+    lines.forEach(([x1,y1,x2,y2]) => { ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); });
+    ctx.strokeStyle = '#bae6fd'; ctx.lineWidth = 1.5; ctx.shadowBlur = 6;
+    lines.forEach(([x1,y1,x2,y2]) => { ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); });
+    ctx.shadowBlur = 0;
+    // Enel crown for enel_contact
+    if (killSource === 'enel_contact') {
+      ctx.fillStyle = '#7dd3fc'; ctx.shadowColor = '#7dd3fc'; ctx.shadowBlur = 10;
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2 - Math.PI/2;
+        ctx.beginPath(); ctx.moveTo(Math.cos(a)*s*0.25, Math.sin(a)*s*0.25);
+        ctx.lineTo(Math.cos(a)*s*0.46, Math.sin(a)*s*0.46); ctx.stroke();
+      }
+      ctx.shadowBlur = 0;
+    }
+
+  } else if (killSource === 'blue_orb') {
+    // Gravitational blue orb with pull rings
+    const rg = ctx.createRadialGradient(0, 0, 4, 0, 0, s*0.52);
+    rg.addColorStop(0, '#93c5fd'); rg.addColorStop(0.5, '#2563eb'); rg.addColorStop(1, '#1e3a8a');
+    ctx.fillStyle = rg;
+    ctx.shadowColor = '#3b82f6'; ctx.shadowBlur = 30;
+    ctx.beginPath(); ctx.arc(0, 0, s*0.52, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    // Distortion rings
+    for (let i = 1; i <= 3; i++) {
+      const ring = s * 0.52 + i * s * 0.22 + Math.sin(t * 0.003 + i) * 4;
+      ctx.strokeStyle = `rgba(96,165,250,${0.4 - i * 0.1})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, 0, ring, 0, Math.PI*2); ctx.stroke();
+    }
+
+  } else if (killSource === 'hollow_purple') {
+    // Purple destructive ball
+    const pg = ctx.createRadialGradient(0, 0, 5, 0, 0, s*0.56);
+    pg.addColorStop(0, '#f5f3ff'); pg.addColorStop(0.3, '#c4b5fd'); pg.addColorStop(0.7, '#7c3aed'); pg.addColorStop(1, '#2e1065');
+    ctx.fillStyle = pg;
+    ctx.shadowColor = '#a78bfa'; ctx.shadowBlur = 35;
+    ctx.beginPath(); ctx.arc(0, 0, s*0.56, 0, Math.PI*2); ctx.fill();
+    // Energy streaks
+    ctx.strokeStyle = 'rgba(245,243,255,0.6)'; ctx.lineWidth = 2;
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + t * 0.001;
+      ctx.beginPath(); ctx.moveTo(Math.cos(a)*s*0.2, Math.sin(a)*s*0.2);
+      ctx.lineTo(Math.cos(a)*s*0.54, Math.sin(a)*s*0.54); ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+
+  } else if (killSource === 'barrier_purple') {
+    // Vertical barrier purple sweep
+    const vg = ctx.createLinearGradient(0, -s*0.7, 0, s*0.7);
+    vg.addColorStop(0, 'rgba(167,139,250,0)'); vg.addColorStop(0.3, 'rgba(167,139,250,0.9)');
+    vg.addColorStop(0.5, '#c4b5fd'); vg.addColorStop(0.7, 'rgba(167,139,250,0.9)'); vg.addColorStop(1, 'rgba(167,139,250,0)');
+    ctx.fillStyle = vg;
+    ctx.shadowColor = '#a78bfa'; ctx.shadowBlur = 24;
+    ctx.fillRect(-s*0.15, -s*0.75, s*0.3, s*1.5);
+    ctx.shadowBlur = 0;
+
+  } else if (killSource === 'red_ball') {
+    // Red volleyball
+    const rg2 = ctx.createRadialGradient(-s*0.15, -s*0.15, 4, 0, 0, s*0.52);
+    rg2.addColorStop(0, '#fca5a5'); rg2.addColorStop(0.5, '#ef4444'); rg2.addColorStop(1, '#7f1d1d');
+    ctx.fillStyle = rg2;
+    ctx.shadowColor = '#ef4444'; ctx.shadowBlur = 20;
+    ctx.beginPath(); ctx.arc(0, 0, s*0.52, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    // Volleyball curve lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-s*0.52, 0); ctx.bezierCurveTo(-s*0.2, -s*0.3, s*0.2, -s*0.3, s*0.52, 0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-s*0.52, 0); ctx.bezierCurveTo(-s*0.2, s*0.3, s*0.2, s*0.3, s*0.52, 0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, -s*0.52); ctx.bezierCurveTo(-s*0.3, -s*0.2, -s*0.3, s*0.2, 0, s*0.52); ctx.stroke();
+
+  } else if (killSource === 'void') {
+    // Shadow hand reaching out
+    ctx.fillStyle = 'rgba(15,5,30,0.95)';
+    ctx.beginPath(); ctx.arc(0, 0, s*0.75, 0, Math.PI*2); ctx.fill();
+    // Arm
+    ctx.fillStyle = '#1a0a2e';
+    ctx.beginPath(); ctx.moveTo(-s*0.18, s*0.7); ctx.lineTo(s*0.18, s*0.7); ctx.lineTo(s*0.14, -s*0.1); ctx.lineTo(-s*0.14, -s*0.1); ctx.closePath(); ctx.fill();
+    // Claws
+    ctx.strokeStyle = '#7c3aed'; ctx.lineWidth = 3; ctx.shadowColor = '#7c3aed'; ctx.shadowBlur = 12;
+    const clawAngles = [-0.5, -0.2, 0.05, 0.3, 0.55];
+    clawAngles.forEach(a => {
+      ctx.beginPath(); ctx.moveTo(Math.cos(a - Math.PI/2)*s*0.12, -s*0.1 + Math.sin(a - Math.PI/2)*s*0.12);
+      ctx.lineTo(Math.cos(a - Math.PI/2)*s*0.46, -s*0.1 + Math.sin(a - Math.PI/2)*s*0.46); ctx.stroke();
+    });
+    ctx.shadowBlur = 0;
+
+  } else {
+    // gojo_contact — blindfolded figure
+    ctx.fillStyle = '#1e1b4b';
+    ctx.beginPath(); ctx.roundRect(-s*0.28, -s*0.15, s*0.56, s*0.65, 6); ctx.fill();
+    ctx.fillStyle = '#ede9fe';
+    ctx.beginPath(); ctx.arc(0, -s*0.38, s*0.24, 0, Math.PI*2); ctx.fill();
+    // Blindfold
+    ctx.fillStyle = '#4c1d95';
+    ctx.fillRect(-s*0.28, -s*0.46, s*0.56, s*0.14);
+    // Purple aura
+    ctx.shadowColor = '#a78bfa'; ctx.shadowBlur = 22;
+    ctx.strokeStyle = 'rgba(167,139,250,0.6)'; ctx.lineWidth = 2;
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 + t * 0.001;
+      ctx.beginPath(); ctx.moveTo(Math.cos(a)*s*0.45, Math.sin(a)*s*0.45);
+      ctx.lineTo(Math.cos(a)*s*0.7, Math.sin(a)*s*0.7); ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+  }
+
+  ctx.restore();
+}
+
+function drawGameOverScreen(ctx, t, char, killSource, startT) {
+  const data    = _DEATH_DATA[killSource] || _DEATH_DATA.enemy;
+  const fadeIn  = Math.min(1, (t - startT) / 700);
+
+  ctx.save();
+  ctx.globalAlpha = fadeIn;
+
+  // Background fill
+  ctx.fillStyle = data.bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Subtle radial light from center
+  const ambG = ctx.createRadialGradient(W/2, H/2, 60, W/2, H/2, H * 0.72);
+  ambG.addColorStop(0, `${data.accent}18`);
+  ambG.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = ambG;
+  ctx.fillRect(0, 0, W, H);
+
+  // ── GAME OVER title ──
+  ctx.save();
+  ctx.font        = 'bold 68px "Segoe UI Black", "Arial Black", sans-serif';
+  ctx.textAlign   = 'center';
+  ctx.shadowColor = data.accent;
+  ctx.shadowBlur  = 40;
+  ctx.fillStyle   = data.accent;
+  ctx.fillText('GAME OVER', W / 2, 88);
+  ctx.shadowBlur  = 0;
+  ctx.restore();
+
+  // Horizontal rule under title
+  ctx.save();
+  ctx.strokeStyle = `${data.accent}55`;
+  ctx.lineWidth   = 1;
+  ctx.beginPath(); ctx.moveTo(80, 106); ctx.lineTo(W - 80, 106); ctx.stroke();
+  ctx.restore();
+
+  // ── Player portrait (left panel) ──
+  const portW = 280, portH = 340;
+  const portX  = 100, portY = 148;
+
+  ctx.save();
+  ctx.shadowColor = char.color.main;
+  ctx.shadowBlur  = 20;
+  roundRect(ctx, portX, portY, portW, portH, 12);
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  roundRect(ctx, portX, portY, portW, portH, 12);
+  ctx.strokeStyle = char.color.main + '80';
+  ctx.lineWidth   = 1.5;
+  ctx.stroke();
+  ctx.restore();
+
+  // Portrait clip + draw — use idle_down PNG, fall back to canvas portrait
+  ctx.save();
+  roundRect(ctx, portX, portY, portW, portH, 12);
+  ctx.clip();
+  Assets.drawSprite(ctx, char, 'idle', 'down', portX, portY, portW, portH, 0, 'contain');
+  ctx.restore();
+
+  // Character name below portrait
+  ctx.font        = `bold 20px "Segoe UI", sans-serif`;
+  ctx.textAlign   = 'center';
+  ctx.fillStyle   = char.color.main;
+  ctx.shadowColor = char.color.main;
+  ctx.shadowBlur  = 10;
+  ctx.fillText(char.name, portX + portW / 2, portY + portH + 28);
+  ctx.shadowBlur  = 0;
+
+  // ── Killer illustration (right panel) ──
+  const kW = 280, kH = 340;
+  const kX  = W - 100 - kW, kY = portY;
+
+  ctx.save();
+  ctx.shadowColor = data.accent;
+  ctx.shadowBlur  = 20;
+  roundRect(ctx, kX, kY, kW, kH, 12);
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  roundRect(ctx, kX, kY, kW, kH, 12);
+  ctx.strokeStyle = data.accent + '80';
+  ctx.lineWidth   = 1.5;
+  ctx.stroke();
+  ctx.restore();
+
+  // Killer PNG — use boss sprite if available, fall back to canvas icon
+  {
+    const killerImg = (() => {
+      if (killSource === 'bomb')          return Assets.getBombImg()      || Assets.getKiraImg();
+      if (killSource === 'sha')           return Assets.getSHAImg()       || Assets.getKiraImg();
+      if (killSource === 'kira_contact')  return Assets.getKiraImg();
+      if (killSource === 'beam')          return Assets.getLightningImg() || Assets.getEnelImg();
+      if (killSource === 'grid')          return Assets.getEnelImg();
+      if (killSource === 'enel_contact')  return Assets.getEnelImg();
+      if (killSource === 'blue_orb')      return Assets.getBlueOrbImg()   || Assets.getGojoImg();
+      if (killSource === 'hollow_purple') return Assets.getPurpleBallImg()|| Assets.getGojoImg();
+      if (killSource === 'barrier_purple')return Assets.getPurpleBallImg()|| Assets.getGojoImg();
+      if (killSource === 'red_ball')      return Assets.getRedBallImg()   || Assets.getGojoImg();
+      if (killSource === 'void')          return Assets.getGojoImg();
+      if (killSource === 'gojo_contact')  return Assets.getGojoImg();
+      return null; // enemy — no PNG
+    })();
+
+    ctx.save();
+    roundRect(ctx, kX, kY, kW, kH, 12);
+    ctx.clip();
+    if (killerImg) {
+      const iw = killerImg.naturalWidth  || killerImg.width;
+      const ih = killerImg.naturalHeight || killerImg.height;
+      const scale = Math.min(kW / iw, kH / ih);
+      const dw = iw * scale, dh = ih * scale;
+      ctx.drawImage(killerImg, kX + (kW - dw) / 2, kY + (kH - dh) / 2, dw, dh);
+    } else {
+      _drawKillerIcon(ctx, kX + kW / 2, kY + kH / 2, killSource, t);
+    }
+    ctx.restore();
+  }
+
+  // Kill source label below icon
+  ctx.font        = `bold 20px "Segoe UI", sans-serif`;
+  ctx.textAlign   = 'center';
+  ctx.fillStyle   = data.accent;
+  ctx.shadowColor = data.accent;
+  ctx.shadowBlur  = 10;
+  ctx.fillText(data.label, kX + kW / 2, kY + kH + 28);
+  ctx.shadowBlur  = 0;
+
+  // ── Center arrow + label ──
+  const arrowY   = portY + portH / 2;
+  const arrowX1  = portX + portW + 24;
+  const arrowX2  = kX - 24;
+  const arrowMX  = (arrowX1 + arrowX2) / 2;
+
+  ctx.save();
+  ctx.strokeStyle = data.accent;
+  ctx.lineWidth   = 2.5;
+  ctx.shadowColor = data.accent;
+  ctx.shadowBlur  = 12;
+  ctx.beginPath(); ctx.moveTo(arrowX1, arrowY); ctx.lineTo(arrowX2, arrowY); ctx.stroke();
+  // Arrowhead
+  ctx.beginPath();
+  ctx.moveTo(arrowX2, arrowY);
+  ctx.lineTo(arrowX2 - 16, arrowY - 9);
+  ctx.lineTo(arrowX2 - 16, arrowY + 9);
+  ctx.closePath();
+  ctx.fillStyle = data.accent;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.restore();
+
+  // "this killed you" label on arrow
+  ctx.font      = 'bold 13px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = `${data.accent}cc`;
+  ctx.fillText('this killed you', arrowMX, arrowY - 12);
+
+  // ── Death message ──
+  const msgY = portY + portH + 66;
+  ctx.font      = 'italic 22px "Segoe UI", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(226,232,240,0.9)';
+  ctx.shadowColor = 'rgba(0,0,0,0.8)';
+  ctx.shadowBlur  = 6;
+  const msgLines = data.msg.split('\n');
+  msgLines.forEach((line, i) => {
+    ctx.fillText(line, W / 2, msgY + i * 32);
+  });
+  ctx.shadowBlur = 0;
+
+  // ── Press ENTER ──
+  const enterBlink = 0.55 + Math.sin(t * 0.003) * 0.35;
+  ctx.font      = `bold 17px "Segoe UI", sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = `rgba(148,163,184,${enterBlink})`;
+  ctx.fillText('Press ENTER to return to title', W / 2, H - 34);
+
+  ctx.restore(); // globalAlpha
+}
+
+// ─── Credits Screen ───────────────────────────────────────────────────────────
+
+function drawCreditsScreen(ctx, t, startT) {
+  const elapsed      = (t - (startT || 0)) / 1000;
+  const SCROLL_SPEED = 75; // px/s
+  const scrollY      = elapsed * SCROLL_SPEED;
+
+  drawBackground(ctx, t);
+
+  // Portrait dimensions — 3 across, centred in the full canvas width
+  const PORT_W = 244, PORT_H = 272, PORT_GAP = 46;
+  const PORT_ROW_W  = PORT_W * 3 + PORT_GAP * 2;
+  const PORT_START_X = Math.round((W - PORT_ROW_W) / 2);
+
+  // Boss data for portrait rows (colours match CLAUDE.md glowColor values)
+  const _BOSS_PORTRAITS = [
+    { name: 'Kira',  img: () => Assets.getKiraImg(),  color: '#7c3aed', glow: 'rgba(124,58,237,'  },
+    { name: 'Enel',  img: () => Assets.getEnelImg(),  color: '#7dd3fc', glow: 'rgba(125,211,252,' },
+    { name: 'Gojo',  img: () => Assets.getGojoImg(),  color: '#a78bfa', glow: 'rgba(167,139,250,' },
+  ];
+
+  // Draws one portrait panel at (px, py) with rounded border, image, and name label.
+  // imgFn() returns an Image/canvas or null; charObj is used for player sprites.
+  function _drawPortrait(px, py, color, glowPrefix, name, imgFn, charObj) {
+    // Background
+    roundRect(ctx, px, py, PORT_W, PORT_H, 11);
+    ctx.fillStyle = 'rgba(0,0,0,0.50)';
+    ctx.fill();
+
+    // Image / sprite
+    ctx.save();
+    roundRect(ctx, px, py, PORT_W, PORT_H, 11);
+    ctx.clip();
+    if (charObj) {
+      Assets.drawSprite(ctx, charObj, 'idle', 'down', px, py, PORT_W, PORT_H, 0, 'contain');
+    } else {
+      const img = imgFn && imgFn();
+      if (img) {
+        const iw = img.naturalWidth  || img.width;
+        const ih = img.naturalHeight || img.height;
+        const sc = Math.min(PORT_W / iw, PORT_H / ih);
+        ctx.drawImage(img, px + (PORT_W - iw * sc) / 2, py + (PORT_H - ih * sc) / 2, iw * sc, ih * sc);
+      }
+    }
+    ctx.restore();
+
+    // Border glow
+    roundRect(ctx, px, py, PORT_W, PORT_H, 11);
+    ctx.strokeStyle = `${glowPrefix}0.60)`;
+    ctx.lineWidth   = 2;
+    ctx.shadowColor = color;
+    ctx.shadowBlur  = 14;
+    ctx.stroke();
+    ctx.shadowBlur  = 0;
+
+    // Name label centred below the panel
+    ctx.font        = 'bold 15px "Segoe UI", sans-serif';
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur  = 8;
+    ctx.fillText(name, px + PORT_W / 2, py + PORT_H + 22);
+    ctx.shadowBlur  = 0;
+  }
+
+  // ── Items list ─────────────────────────────────────────────────────────────
+  // portrait_row height = PORT_H + name label (22px) + bottom margin (16px)
+  const PORT_ROW_H = PORT_H + 38;
+  const CX = W / 2;
+
+  const items = [
+    { type: 'win_title', h: 92 },
+    { type: 'win_sub',   h: 52 },
+    { type: 'spacer',    h: 78 },
+    { type: 'game_title',h: 68 },
+    { type: 'spacer',    h: 60 },
+    { type: 'section',   text: 'CREATED BY', h: 36 },
+    { type: 'row',       label: 'Director / Created by', value: 'Anel Hodzic', h: 40 },
+    { type: 'row',       label: 'Built with',            value: 'Claude Code',  h: 40 },
+    { type: 'spacer',    h: 80 },
+    { type: 'section',   text: 'CHARACTERS', h: 36 },
+    { type: 'spacer',    h: 22 },
+    { type: 'portrait_row', group: 'players', h: PORT_ROW_H },
+    { type: 'spacer',    h: 22 },
+    { type: 'charrow',   label: 'Kaido', value: 'One Piece',                color: '#60a5fa', h: 36 },
+    { type: 'charrow',   label: 'Dio',   value: "JoJo's Bizarre Adventure", color: '#eab308', h: 36 },
+    { type: 'charrow',   label: 'Levi',  value: 'Attack on Titan',          color: '#4ade80', h: 36 },
+    { type: 'spacer',    h: 80 },
+    { type: 'section',   text: 'BOSSES', h: 36 },
+    { type: 'spacer',    h: 22 },
+    { type: 'portrait_row', group: 'bosses', h: PORT_ROW_H },
+    { type: 'spacer',    h: 22 },
+    { type: 'charrow',   label: 'Kira',  value: "JoJo's Bizarre Adventure", color: '#7c3aed', h: 36 },
+    { type: 'charrow',   label: 'Enel',  value: 'One Piece',                color: '#7dd3fc', h: 36 },
+    { type: 'charrow',   label: 'Gojo',  value: 'Jujutsu Kaisen',           color: '#a78bfa', h: 36 },
+    { type: 'spacer',    h: 40 },
+  ];
+
+  const totalH = items.reduce((s, i) => s + i.h, 0);
+
+  // Ending-sequence timing (in seconds from startT)
+  // Last item exits the top of the screen when scrollY >= H + totalH
+  const allGoneAt    = (H + totalH) / SCROLL_SPEED; // last content clears viewport
+  const thanksShowAt = allGoneAt + 0.5;              // 0.5s empty pause, then "Thanks"
+  const enterShowAt  = thanksShowAt + 1.0;           // 1s later, "Press ENTER" fades in
+
+  const inEndingPhase = elapsed >= thanksShowAt;
+
+  // ── Scrolling credits (only while content is still visible) ────────────────
+  if (!inEndingPhase) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, W, H);
+    ctx.clip();
+
+    let curY = H - scrollY;
+    for (const item of items) {
+      const iy  = curY;
+      curY += item.h;
+      if (curY < -(PORT_ROW_H + 40) || iy > H + 40) continue;
+
+      ctx.save();
+
+      if (item.type === 'win_title') {
+        const pulse = 0.8 + Math.sin(t * 0.002) * 0.2;
+        ctx.font        = 'bold 76px "Segoe UI Black", "Arial Black", sans-serif';
+        ctx.textAlign   = 'center';
+        ctx.shadowColor = `rgba(167,139,250,${pulse})`;
+        ctx.shadowBlur  = 44;
+        ctx.fillStyle   = '#fff';
+        ctx.fillText('YOU WIN!', CX, iy + 74);
+        ctx.shadowBlur  = 0;
+
+      } else if (item.type === 'win_sub') {
+        ctx.font        = 'bold 22px "Segoe UI", sans-serif';
+        ctx.textAlign   = 'center';
+        ctx.fillStyle   = 'rgba(220,200,255,0.85)';
+        ctx.shadowColor = '#a78bfa';
+        ctx.shadowBlur  = 14;
+        ctx.fillText('All three floors cleared!', CX, iy + 32);
+        ctx.shadowBlur  = 0;
+
+      } else if (item.type === 'game_title') {
+        const gp2 = 0.8 + Math.sin(t * 0.0016) * 0.2;
+        ctx.font        = 'bold 44px "Segoe UI Black", "Arial Black", sans-serif';
+        ctx.textAlign   = 'center';
+        ctx.shadowColor = `rgba(168,85,247,${gp2})`;
+        ctx.shadowBlur  = 28;
+        ctx.fillStyle   = '#fff';
+        ctx.fillText('CROSSOVER GAUNTLET', CX, iy + 48);
+        ctx.shadowBlur  = 0;
+        ctx.font      = 'bold 12px "Courier New", monospace';
+        ctx.fillStyle = 'rgba(148,163,184,0.5)';
+        ctx.fillText('C  R  E  D  I  T  S', CX, iy + 66);
+
+      } else if (item.type === 'section') {
+        ctx.font      = 'bold 12px "Courier New", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(168,85,247,0.75)';
+        ctx.fillText('— ' + item.text + ' —', CX, iy + 20);
+        const tw = ctx.measureText('— ' + item.text + ' —').width;
+        ctx.strokeStyle = 'rgba(168,85,247,0.18)';
+        ctx.lineWidth   = 1;
+        const ly = iy + 12;
+        ctx.beginPath(); ctx.moveTo(60, ly); ctx.lineTo(CX - tw / 2 - 8, ly); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(CX + tw / 2 + 8, ly); ctx.lineTo(W - 60, ly); ctx.stroke();
+
+      } else if (item.type === 'row') {
+        ctx.textAlign   = 'right';
+        ctx.font        = '15px "Segoe UI", sans-serif';
+        ctx.fillStyle   = 'rgba(148,163,184,0.65)';
+        ctx.fillText(item.label, CX - 14, iy + 26);
+        ctx.textAlign   = 'left';
+        ctx.font        = 'bold 16px "Segoe UI", sans-serif';
+        ctx.fillStyle   = 'rgba(226,232,240,0.92)';
+        ctx.shadowColor = 'rgba(168,85,247,0.35)';
+        ctx.shadowBlur  = 6;
+        ctx.fillText(item.value, CX + 14, iy + 26);
+        ctx.shadowBlur  = 0;
+
+      } else if (item.type === 'charrow') {
+        ctx.textAlign   = 'right';
+        ctx.font        = 'bold 17px "Segoe UI", sans-serif';
+        ctx.fillStyle   = item.color;
+        ctx.shadowColor = item.color;
+        ctx.shadowBlur  = 8;
+        ctx.fillText(item.label, CX - 14, iy + 26);
+        ctx.shadowBlur  = 0;
+        ctx.textAlign   = 'left';
+        ctx.font        = '15px "Segoe UI", sans-serif';
+        ctx.fillStyle   = 'rgba(148,163,184,0.65)';
+        ctx.fillText(item.value, CX + 14, iy + 26);
+
+      } else if (item.type === 'portrait_row') {
+        if (item.group === 'players') {
+          CHARACTERS.forEach((char, i) => {
+            _drawPortrait(
+              PORT_START_X + i * (PORT_W + PORT_GAP), iy,
+              char.color.main, char.color.glow, char.name,
+              null, char
+            );
+          });
+        } else {
+          _BOSS_PORTRAITS.forEach((b, i) => {
+            _drawPortrait(
+              PORT_START_X + i * (PORT_W + PORT_GAP), iy,
+              b.color, b.glow, b.name,
+              b.img, null
+            );
+          });
+        }
+
+      } else if (item.type === 'thanks') {
+        const pulse = 0.6 + Math.sin(t * 0.0018) * 0.3;
+        ctx.font        = 'italic 18px "Segoe UI", sans-serif';
+        ctx.textAlign   = 'center';
+        ctx.fillStyle   = `rgba(196,181,253,${pulse})`;
+        ctx.shadowColor = '#a78bfa';
+        ctx.shadowBlur  = 10;
+        ctx.fillText('Thank you for playing. The Gauntlet remembers.', CX, iy + 34);
+        ctx.shadowBlur  = 0;
+      }
+
+      ctx.restore();
+    }
+
+    ctx.restore(); // end clip
+
+    // Top/bottom fade overlays (only while scrolling — hidden in ending phase)
+    const fadeH = 90;
+    const topG  = ctx.createLinearGradient(0, 0, 0, fadeH);
+    topG.addColorStop(0, '#04040f');
+    topG.addColorStop(1, 'rgba(4,4,15,0)');
+    ctx.fillStyle = topG;
+    ctx.fillRect(0, 0, W, fadeH);
+
+    const botG = ctx.createLinearGradient(0, H - fadeH, 0, H);
+    botG.addColorStop(0, 'rgba(4,4,15,0)');
+    botG.addColorStop(1, '#04040f');
+    ctx.fillStyle = botG;
+    ctx.fillRect(0, H - fadeH, W, fadeH);
+  }
+
+  // ── Ending phase: bare starfield + two centred lines ──────────────────────
+  if (inEndingPhase) {
+    // "Thanks for Playing!" — fades in over 0.9s
+    const thanksA = Math.min(1, (elapsed - thanksShowAt) / 0.9);
+    ctx.save();
+    ctx.globalAlpha = thanksA;
+    ctx.font        = 'bold 54px "Segoe UI Black", "Arial Black", sans-serif';
+    ctx.textAlign   = 'center';
+    ctx.shadowColor = '#a78bfa';
+    ctx.shadowBlur  = 38;
+    ctx.fillStyle   = '#fff';
+    ctx.fillText('Thanks for Playing!', CX, H / 2 - 22);
+    ctx.shadowBlur  = 0;
+    ctx.restore();
+
+    // "Press ENTER to play again" — fades in over 0.7s, then blinks
+    const enterRaw = Math.max(0, (elapsed - enterShowAt) / 0.7);
+    const enterA   = Math.min(1, enterRaw);
+    if (enterA > 0) {
+      const blink = enterA < 1 ? enterA : 0.55 + Math.sin(t * 0.003) * 0.35;
+      ctx.save();
+      ctx.globalAlpha = blink;
+      ctx.font        = 'bold 18px "Segoe UI", sans-serif';
+      ctx.textAlign   = 'center';
+      ctx.fillStyle   = '#fff';
+      ctx.shadowColor = '#a78bfa';
+      ctx.shadowBlur  = 14;
+      ctx.fillText('Press ENTER to play again', CX, H / 2 + 36);
+      ctx.shadowBlur  = 0;
+      ctx.restore();
+    }
+  }
 }

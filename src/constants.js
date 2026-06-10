@@ -2,6 +2,7 @@ const W = 1280;
 const H = 720;
 
 const STATE = {
+  TITLE:         'title',
   CHAR_SELECT:   'char_select',
   POWER_SELECT:  'power_select',
   DEV_POWERS:    'dev_powers',
@@ -10,6 +11,7 @@ const STATE = {
   STAT_BOOST:    'stat_boost',
   WIN:           'win',
   GAME_OVER:     'game_over',
+  CREDITS:       'credits',
 };
 
 const COLORS = {

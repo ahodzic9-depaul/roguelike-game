@@ -3,6 +3,22 @@
 const ROOM = { x: 80, y: 60, w: 1120, h: 600 };
 const PW = 56, PH = 72;   // player sprite size
 const EW = 46, EH = 46;   // basic enemy size
+const RW = 40, RH = 40;   // ranged enemy size
+const TW = 58, TH = 60;   // tank enemy size
+
+// Ranged enemy AI constants
+const RANGED_PREFER_DIST  = 260;
+const RANGED_FLEE_DIST    = 155;
+const RANGED_CHASE_DIST   = 340;
+const RANGED_WINDUP_DUR   = 0.9;
+const RANGED_FIRE_CD      = 2.8;
+const RANGED_BULLET_SPD   = 320;
+
+// Tank enemy AI constants
+const TANK_WINDUP_DUR     = 0.65;
+const TANK_CHARGE_SPD     = 360;
+const TANK_CHARGE_DUR     = 0.55;
+const TANK_RECOVERY_DUR   = 0.45;
 
 // Door is always on the right wall, vertically centered
 const DOOR_H = 84;
@@ -34,16 +50,9 @@ const KB_COOLDOWN   = 1.6;   // recharge delay after beam ends
 let gp = null;
 
 function _generateRooms(floor) {
-  if (floor === 1) {
-    const n = 2 + (Math.random() < 0.5 ? 1 : 0);
-    return ['tutorial', ...Array(n).fill('combat'), 'boss'];
-  }
-  if (floor === 2) {
-    const n = 3 + (Math.random() < 0.5 ? 1 : 0);
-    return ['tutorial', ...Array(n).fill('combat'), 'boss'];
-  }
-  const n = Math.random() < 0.5 ? 0 : 1;
-  return ['tutorial', ...Array(n).fill('combat'), 'boss'];
+  if (floor === 1) return ['tutorial', 'combat', 'combat', 'combat', 'boss'];
+  if (floor === 2) return ['tutorial', 'combat', 'combat', 'combat', 'boss'];
+  return ['tutorial', 'combat', 'boss'];
 }
 
 // opts: { floor, startHp }
@@ -72,18 +81,25 @@ function initGameplay(char, power, opts) {
       fireCooldown: 0,
     },
     enemies:       [],
+    enemyBullets:  [],
     projectiles:   [],
     activeAttacks: [],
     roomCleared:   isTutorial,
     gameOver:      false,
+    killSource:    null,
     kaidoBreath:   { state: 'idle', chargeTimer: 0, fireTimer: 0, cooldownTimer: 0, dir: 'right', tickTimer: 0 },
     powerState:    null,
     boss:          null,
     bossAttacks:   [],
     bossDefeated:  false,
-    devBossSelect: false,
-    hints:         { shown: {}, text: null, timer: 0, maxTimer: 0 },
+    devBossSelect:      false,
+    devCinematicPicker: false,
+    devDeathScreen:     false,
+    devDeathPreview:    null,
+    devLaunchCredits:   false,
+    hints:              { shown: {}, text: null, timer: 0, maxTimer: 0 },
     cinematic:     null,
+    critEffects:   [],
   };
   gp.powerState = _initPowerState(power, char);
   if (!isTutorial) _spawnEnemies();
@@ -96,6 +112,7 @@ function _nextRoom() {
   const isBoss     = roomType === 'boss';
 
   gp.enemies       = [];
+  gp.enemyBullets  = [];
   gp.projectiles   = [];
   gp.activeAttacks = [];
   gp.bossAttacks   = [];
@@ -123,8 +140,13 @@ function updateGameplay(dt, t) {
     return;
   }
 
+  if (gp.devCinematicPicker) {
+    _updateDevCinematicPicker();
+    return;
+  }
+
   if (gp.devBossSelect) {
-    _updateDevBossSelect();
+    _updateDevBossSelect(t);
     return;
   }
 
@@ -139,10 +161,7 @@ function updateGameplay(dt, t) {
     return;
   }
 
-  if (gp.gameOver) {
-    if (Input.justPressed('Enter')) initGameplay(gp.char, gp.power);
-    return;
-  }
+  if (gp.gameOver) return;
 
   if (gp.hints.timer > 0) gp.hints.timer -= dt;
 
@@ -180,9 +199,11 @@ function drawGameplay(ctx, t) {
   _drawBossAttacks(ctx, t);
   _drawEnemies(ctx);
   _drawBoss(ctx, t);
+  if (gp.boss && gp.boss.type === 'gojo') _drawGojoIT(ctx, gp.boss);
   _drawPowerAura(ctx, t);   // aura behind the player sprite
   _drawPlayer(ctx, t);
   if (gp.char.id === 'kaido') _drawKaidoBreathCharge(ctx, t);
+  if (gp.boss && gp.boss.type === 'gojo') _drawGojoStunOverlay(ctx, t, gp.boss);
   _drawPowerEffects(ctx, t);
   _drawCombatHint(ctx);
   if (gp.boss && gp.boss.type === 'gojo' && gp.boss.voidTellTimer > 0) _drawVoidTell(ctx, t, gp.boss);
@@ -202,8 +223,7 @@ function drawGameplay(ctx, t) {
     ctx.font      = '18px "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
     const continueMsg = gp.floor >= 3 ? 'Press ENTER to play again'
-                      : gp.floor === 2 ? 'Press ENTER — choose a stat boost'
-                      : 'Press ENTER — choose an upgrade';
+                      : 'Press ENTER — claim your reward';
     ctx.fillText(continueMsg, W / 2, H / 2 + 28);
   } else if (gp.roomCleared && currentRoomType !== 'tutorial') {
     if (!isFinalRoom) {
@@ -213,18 +233,8 @@ function drawGameplay(ctx, t) {
     }
   }
 
-  if (gp.gameOver) {
-    ctx.fillStyle = 'rgba(0,0,0,0.65)';
-    ctx.fillRect(0, 0, W, H);
-    glowText(ctx, 'GAME OVER', W / 2, H / 2 - 24, '#ef4444', 28,
-      'bold 58px "Segoe UI Black", "Arial Black", sans-serif');
-    ctx.fillStyle = 'rgba(255,255,255,0.45)';
-    ctx.font      = '18px "Segoe UI", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('Press ENTER to try again', W / 2, H / 2 + 28);
-  }
-
   if (gp.devBossSelect) _drawDevBossSelect(ctx, t);
+  if (gp.devCinematicPicker) _drawDevCinematicPicker(ctx, t);
 
   _updateHUD();
 }
@@ -393,7 +403,7 @@ function _drawRoom(ctx) {
   }
 
   // ── Left dev door (first tutorial room only) ───────────────────────────
-  if (gp && gp.roomIndex === 0) {
+  if (gp && gp.floor === 1 && gp.roomIndex === 0) {
     ctx.save();
     ctx.shadowColor = '#a855f7';
     ctx.shadowBlur  = 14;
@@ -436,34 +446,158 @@ function _drawRoom(ctx) {
 
 // ─── Enemies ──────────────────────────────────────────────────────────────────
 
-function _spawnEnemies() {
-  const count      = 3 + (Math.random() < 0.5 ? 1 : 0);
-  const margin     = 40;
-  const safeRadius = 220;
-  // Player always enters from the left side
-  const spawnPX    = ROOM.x + 24 + PW / 2;
-  const spawnPY    = ROOM.y + ROOM.h / 2;
+function _makeEnemy(type, x, y) {
+  const base = { x, y, vx: 0, vy: 0, knockbackTimer: 0 };
+  if (type === 'ranged') {
+    return { ...base, type: 'ranged', w: RW, h: RH, hp: 45, maxHp: 45, speed: 75, damage: 15,
+             fireCooldown: 1.5 + Math.random() * 1.0, windupActive: false, windupTimer: 0,
+             strafeDir: Math.random() < 0.5 ? 1 : -1, strafeTimer: 1.0 + Math.random() };
+  }
+  if (type === 'tank') {
+    return { ...base, type: 'tank', w: TW, h: TH, hp: 180, maxHp: 180, speed: 50, damage: 22,
+             chargeState: null, chargeTimer: 3.5 + Math.random() * 2.5,
+             chargeDir: { x: 0, y: 0 }, windupTimer: 0, chargeDur: 0, recoveryTimer: 0 };
+  }
+  return { ...base, type: 'basic', w: EW, h: EH, hp: 60, maxHp: 60, speed: 90, damage: 12 };
+}
 
-  for (let i = 0; i < count; i++) {
+function _spawnEnemies() {
+  // Room compositions keyed by [floor][combatRoomIndex (1-based)]
+  let composition;
+  const ci = gp.roomIndex; // 1 = first combat room, 2 = second, 3 = third
+  if (gp.floor === 1) {
+    if      (ci === 1) { const n = 3 + (Math.random() < 0.5 ? 1 : 0); composition = Array(n).fill('basic'); }
+    else if (ci === 2) { const n = 2 + (Math.random() < 0.5 ? 1 : 0); composition = [...Array(n).fill('basic'), 'ranged']; }
+    else               { composition = ['basic', 'ranged', 'basic', 'ranged'].sort(() => Math.random() - 0.5); }
+  } else if (gp.floor === 2) {
+    if      (ci === 1) { composition = ['basic', 'ranged', 'ranged', 'ranged']; }
+    else if (ci === 2) { composition = ['ranged', 'ranged', 'tank']; }
+    else               { composition = ['tank', 'tank']; }
+  } else {
+    composition = ['basic', 'basic', 'ranged', 'ranged', 'tank', 'tank'];
+  }
+
+  const margin = 40, safeRadius = 220;
+  const spawnPX = ROOM.x + 24 + PW / 2, spawnPY = ROOM.y + ROOM.h / 2;
+
+  for (const type of composition) {
+    const ew = type === 'tank' ? TW : (type === 'ranged' ? RW : EW);
+    const eh = type === 'tank' ? TH : (type === 'ranged' ? RH : EH);
     let x, y, attempts = 0;
     do {
-      x = ROOM.x + margin + Math.random() * (ROOM.w - EW - margin * 2);
-      y = ROOM.y + margin + Math.random() * (ROOM.h - EH - margin * 2);
-      const dx = x + EW / 2 - spawnPX;
-      const dy = y + EH / 2 - spawnPY;
+      x = ROOM.x + margin + Math.random() * (ROOM.w - ew - margin * 2);
+      y = ROOM.y + margin + Math.random() * (ROOM.h - eh - margin * 2);
+      const dx = x + ew / 2 - spawnPX, dy = y + eh / 2 - spawnPY;
       if (dx * dx + dy * dy >= safeRadius * safeRadius) break;
     } while (++attempts < 30);
-    gp.enemies.push({ x, y, hp: 60, maxHp: 60, speed: 90, damage: 12, vx: 0, vy: 0, knockbackTimer: 0 });
+    gp.enemies.push(_makeEnemy(type, x, y));
   }
+}
+
+function _updateRangedEnemy(e, pcx, pcy, dt) {
+  const dx = pcx - (e.x + e.w/2), dy = pcy - (e.y + e.h/2);
+  const dist = Math.sqrt(dx*dx + dy*dy) || 1;
+  const nx = dx/dist, ny = dy/dist;
+
+  if (e.windupActive) {
+    e.windupTimer += dt;
+    if (e.windupTimer >= RANGED_WINDUP_DUR) {
+      gp.enemyBullets.push({ x: e.x+e.w/2, y: e.y+e.h/2,
+        vx: nx*RANGED_BULLET_SPD, vy: ny*RANGED_BULLET_SPD,
+        r: 7, damage: e.damage, life: 2.0 });
+      e.windupActive = false; e.windupTimer = 0;
+      e.fireCooldown = RANGED_FIRE_CD;
+    }
+    return; // frozen in place during windup
+  }
+
+  let moveX = 0, moveY = 0;
+  if (dist < RANGED_FLEE_DIST) {
+    moveX = -nx; moveY = -ny;
+  } else if (dist > RANGED_CHASE_DIST) {
+    moveX = nx * 0.7; moveY = ny * 0.7;
+  } else {
+    e.strafeTimer -= dt;
+    if (e.strafeTimer <= 0) { e.strafeDir = -e.strafeDir; e.strafeTimer = 1.2 + Math.random() * 1.2; }
+    moveX = -ny * e.strafeDir + nx * ((dist - RANGED_PREFER_DIST) / RANGED_PREFER_DIST) * 0.4;
+    moveY =  nx * e.strafeDir + ny * ((dist - RANGED_PREFER_DIST) / RANGED_PREFER_DIST) * 0.4;
+    const ml = Math.sqrt(moveX*moveX + moveY*moveY) || 1;
+    moveX /= ml; moveY /= ml;
+  }
+  e.x += moveX * e.speed * dt;
+  e.y += moveY * e.speed * dt;
+
+  e.fireCooldown -= dt;
+  if (e.fireCooldown <= 0 && dist <= RANGED_CHASE_DIST) {
+    e.windupActive = true; e.windupTimer = 0;
+  }
+}
+
+function _updateTankEnemy(e, pcx, pcy, dt) {
+  if (e.chargeState === null) {
+    const dx = pcx-(e.x+e.w/2), dy = pcy-(e.y+e.h/2);
+    const dist = Math.sqrt(dx*dx+dy*dy) || 1;
+    if (dist > 2) { e.x += (dx/dist)*e.speed*dt; e.y += (dy/dist)*e.speed*dt; }
+    e.chargeTimer -= dt;
+    if (e.chargeTimer <= 0) { e.chargeState = 'windup'; e.windupTimer = 0; }
+  } else if (e.chargeState === 'windup') {
+    e.windupTimer += dt;
+    if (e.windupTimer >= TANK_WINDUP_DUR) {
+      const dx = pcx-(e.x+e.w/2), dy = pcy-(e.y+e.h/2);
+      const dist = Math.sqrt(dx*dx+dy*dy) || 1;
+      e.chargeDir = { x: dx/dist, y: dy/dist };
+      e.chargeDur = 0; e.chargeState = 'charging';
+    }
+  } else if (e.chargeState === 'charging') {
+    e.x += e.chargeDir.x * TANK_CHARGE_SPD * dt;
+    e.y += e.chargeDir.y * TANK_CHARGE_SPD * dt;
+    e.chargeDur += dt;
+    if (e.chargeDur >= TANK_CHARGE_DUR) { e.chargeState = 'recovery'; e.recoveryTimer = 0; }
+  } else if (e.chargeState === 'recovery') {
+    e.recoveryTimer += dt;
+    if (e.recoveryTimer >= TANK_RECOVERY_DUR) {
+      e.chargeState = null; e.chargeTimer = 3.5 + Math.random() * 2.5;
+    }
+  }
+
+  // Wall clamp — end charge early on wall contact
+  const px = e.x, py = e.y;
+  e.x = Math.max(ROOM.x, Math.min(ROOM.x + ROOM.w - e.w, e.x));
+  e.y = Math.max(ROOM.y, Math.min(ROOM.y + ROOM.h - e.h, e.y));
+  if (e.chargeState === 'charging' && (e.x !== px || e.y !== py)) {
+    e.chargeState = 'recovery'; e.recoveryTimer = 0;
+  }
+}
+
+function _tickEnemyBullets(p, dt) {
+  const frozen = gp.power.id === 'timestop' && gp.powerState.frozen;
+  if (frozen) return;
+  gp.enemyBullets = gp.enemyBullets.filter(b => {
+    b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+    if (b.life <= 0 || b.x < ROOM.x || b.x > ROOM.x+ROOM.w ||
+        b.y < ROOM.y || b.y > ROOM.y+ROOM.h) return false;
+    if (p.iFrames <= 0 && Math.abs(b.x - (p.x+PW/2)) < b.r+PW/2 &&
+        Math.abs(b.y - (p.y+PH/2)) < b.r+PH/2) {
+      let dmg = b.damage;
+      if (gp.power.id === 'haki') dmg = Math.ceil(dmg * 0.65);
+      p.hp -= dmg;
+      p.iFrames = 1.2;
+      _hakiReflect(b.damage, null);
+      if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; gp.killSource = 'ranged_enemy'; }
+      return false;
+    }
+    return true;
+  });
 }
 
 function _updateEnemies(dt) {
   const p = gp.player;
   const pcx = p.x + PW / 2, pcy = p.y + PH / 2;
+  const frozen = gp.power.id === 'timestop' && gp.powerState.frozen;
+
+  _tickEnemyBullets(p, dt);
 
   gp.enemies = gp.enemies.filter(e => e.hp > 0);
-
-  const frozen = gp.power.id === 'timestop' && gp.powerState.frozen;
 
   for (const e of gp.enemies) {
     if (!frozen) {
@@ -472,68 +606,148 @@ function _updateEnemies(dt) {
         e.y += e.vy * dt;
         e.knockbackTimer -= dt;
         const drag = Math.pow(0.04, dt);
-        e.vx *= drag;
-        e.vy *= drag;
+        e.vx *= drag; e.vy *= drag;
+      } else if (e.type === 'ranged') {
+        _updateRangedEnemy(e, pcx, pcy, dt);
+      } else if (e.type === 'tank') {
+        _updateTankEnemy(e, pcx, pcy, dt);
       } else {
-        const dx   = pcx - (e.x + EW / 2);
-        const dy   = pcy - (e.y + EH / 2);
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        if (dist > 2) {
-          e.x += (dx / dist) * e.speed * dt;
-          e.y += (dy / dist) * e.speed * dt;
-        }
+        const dx = pcx - (e.x + e.w/2), dy = pcy - (e.y + e.h/2);
+        const dist = Math.sqrt(dx*dx + dy*dy) || 1;
+        if (dist > 2) { e.x += (dx/dist)*e.speed*dt; e.y += (dy/dist)*e.speed*dt; }
       }
-      e.x = Math.max(ROOM.x, Math.min(ROOM.x + ROOM.w - EW, e.x));
-      e.y = Math.max(ROOM.y, Math.min(ROOM.y + ROOM.h - EH, e.y));
+
+      if (e.type !== 'tank') {
+        e.x = Math.max(ROOM.x, Math.min(ROOM.x + ROOM.w - e.w, e.x));
+        e.y = Math.max(ROOM.y, Math.min(ROOM.y + ROOM.h - e.h, e.y));
+      }
 
       if (p.iFrames <= 0 &&
-          _rectsOverlap({ x: p.x, y: p.y, w: PW, h: PH }, { x: e.x, y: e.y, w: EW, h: EH })) {
+          _rectsOverlap({ x: p.x, y: p.y, w: PW, h: PH }, { x: e.x, y: e.y, w: e.w, h: e.h })) {
         let dmg = e.damage;
-        if (gp.power.id === 'haki') dmg = Math.ceil(dmg * 0.65); // 35% reduction
+        if (gp.power.id === 'haki') dmg = Math.ceil(dmg * 0.65);
         p.hp -= dmg;
         p.iFrames = 1.2;
-        if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; }
+        _hakiReflect(e.damage, e);
+        const ks = e.type === 'tank' ? 'tank_enemy' : e.type === 'ranged' ? 'ranged_enemy' : 'enemy';
+        if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; gp.killSource = ks; }
       }
     }
   }
 }
 
+function _drawBasicEnemy(ctx, e) {
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(e.x+e.w/2, e.y+e.h+4, e.w*0.42, 6, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.shadowColor = '#ef4444'; ctx.shadowBlur = 10;
+  ctx.fillStyle   = '#7f1d1d'; ctx.fillRect(e.x, e.y, e.w, e.h);
+  ctx.fillStyle   = '#b91c1c'; ctx.fillRect(e.x+3, e.y+3, e.w-6, e.h-6);
+  ctx.shadowBlur  = 0;
+
+  ctx.fillStyle = '#fde68a'; ctx.shadowColor = '#fde68a'; ctx.shadowBlur = 6;
+  ctx.fillRect(e.x+7, e.y+11, 10, 10); ctx.fillRect(e.x+e.w-17, e.y+11, 10, 10);
+  ctx.fillStyle = '#000'; ctx.shadowBlur = 0;
+  ctx.fillRect(e.x+9, e.y+13, 6, 6); ctx.fillRect(e.x+e.w-15, e.y+13, 6, 6);
+
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(e.x, e.y-10, e.w, 5);
+  ctx.fillStyle = '#ef4444'; ctx.shadowColor = '#ef4444'; ctx.shadowBlur = 4;
+  ctx.fillRect(e.x, e.y-10, e.w * Math.max(0, e.hp/e.maxHp), 5);
+  ctx.shadowBlur = 0;
+}
+
+function _drawRangedEnemy(ctx, e, p) {
+  const cx = e.x+e.w/2, cy = e.y+e.h/2, r = e.w/2;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(cx, cy+r+4, r*0.9, 5, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  if (e.windupActive) {
+    const prog = Math.min(1, e.windupTimer / RANGED_WINDUP_DUR);
+    ctx.shadowColor = '#22d3ee'; ctx.shadowBlur = 8 + prog * 28;
+  }
+
+  ctx.save();
+  ctx.translate(cx, cy); ctx.rotate(Math.PI / 4);
+  const dr = r * 0.84;
+  ctx.fillStyle = '#164e63'; ctx.fillRect(-dr, -dr, dr*2, dr*2);
+  ctx.fillStyle = '#0891b2'; ctx.fillRect(-dr*0.72, -dr*0.72, dr*1.44, dr*1.44);
+  ctx.fillStyle = '#22d3ee'; ctx.fillRect(-dr*0.36, -dr*0.36, dr*0.72, dr*0.72);
+  ctx.restore();
+  ctx.shadowBlur = 0;
+
+  // "Eye" barrel pointing toward player
+  const angle = Math.atan2((p.y+PH/2)-cy, (p.x+PW/2)-cx);
+  const bx = cx + Math.cos(angle)*r*0.52, by = cy + Math.sin(angle)*r*0.52;
+  ctx.fillStyle = '#ecfeff'; ctx.shadowColor = '#22d3ee'; ctx.shadowBlur = 8;
+  ctx.beginPath(); ctx.arc(bx, by, r*0.24, 0, Math.PI*2); ctx.fill();
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(e.x, e.y-10, e.w, 5);
+  ctx.fillStyle = '#06b6d4'; ctx.shadowColor = '#06b6d4'; ctx.shadowBlur = 4;
+  ctx.fillRect(e.x, e.y-10, e.w * Math.max(0, e.hp/e.maxHp), 5);
+  ctx.shadowBlur = 0;
+}
+
+function _drawTankEnemy(ctx, e) {
+  const cx = e.x+e.w/2, cy = e.y+e.h/2;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.38)';
+  ctx.beginPath();
+  ctx.ellipse(cx, cy+e.h/2+5, e.w*0.46, 7, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  if (e.chargeState === 'windup') {
+    const prog = e.windupTimer / TANK_WINDUP_DUR;
+    ctx.shadowColor = '#f97316'; ctx.shadowBlur = 12 + prog * 32;
+  } else if (e.chargeState === 'charging') {
+    ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 24;
+  }
+
+  ctx.fillStyle = '#7c2d12';
+  ctx.beginPath(); ctx.roundRect(e.x, e.y, e.w, e.h, 6); ctx.fill();
+  ctx.fillStyle = e.chargeState === 'charging' ? '#ea580c' : '#c2410c';
+  ctx.beginPath(); ctx.roundRect(e.x+3, e.y+3, e.w-6, e.h-6, 4); ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Armor plating lines
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fillRect(e.x+6, cy-3, e.w-12, 6);
+  ctx.fillRect(cx-3, e.y+6, 6, e.h-12);
+
+  // Eyes — small and close together
+  ctx.fillStyle = '#fbbf24'; ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 5;
+  ctx.fillRect(cx-13, cy-11, 9, 9); ctx.fillRect(cx+4, cy-11, 9, 9);
+  ctx.fillStyle = '#000'; ctx.shadowBlur = 0;
+  ctx.fillRect(cx-11, cy-9, 5, 5); ctx.fillRect(cx+6, cy-9, 5, 5);
+
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(e.x, e.y-10, e.w, 5);
+  ctx.fillStyle = '#f97316'; ctx.shadowColor = '#f97316'; ctx.shadowBlur = 4;
+  ctx.fillRect(e.x, e.y-10, e.w * Math.max(0, e.hp/e.maxHp), 5);
+  ctx.shadowBlur = 0;
+}
+
 function _drawEnemies(ctx) {
+  const p = gp.player;
   for (const e of gp.enemies) {
-    // Drop shadow
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    ctx.beginPath();
-    ctx.ellipse(e.x + EW / 2, e.y + EH + 4, EW * 0.42, 6, 0, 0, Math.PI * 2);
-    ctx.fill();
+    if      (e.type === 'ranged') _drawRangedEnemy(ctx, e, p);
+    else if (e.type === 'tank')   _drawTankEnemy(ctx, e);
+    else                          _drawBasicEnemy(ctx, e);
+  }
 
-    // Body
-    ctx.shadowColor = '#ef4444';
-    ctx.shadowBlur  = 10;
-    ctx.fillStyle   = '#7f1d1d';
-    ctx.fillRect(e.x, e.y, EW, EH);
-    ctx.fillStyle   = '#b91c1c';
-    ctx.fillRect(e.x + 3, e.y + 3, EW - 6, EH - 6);
-    ctx.shadowBlur  = 0;
-
-    // Eyes
-    ctx.fillStyle   = '#fde68a';
-    ctx.shadowColor = '#fde68a';
-    ctx.shadowBlur  = 6;
-    ctx.fillRect(e.x + 7,        e.y + 11, 10, 10);
-    ctx.fillRect(e.x + EW - 17,  e.y + 11, 10, 10);
-    ctx.fillStyle   = '#000';
-    ctx.shadowBlur  = 0;
-    ctx.fillRect(e.x + 9,        e.y + 13, 6, 6);
-    ctx.fillRect(e.x + EW - 15,  e.y + 13, 6, 6);
-
-    // HP bar
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(e.x, e.y - 10, EW, 5);
-    ctx.fillStyle   = '#ef4444';
-    ctx.shadowColor = '#ef4444';
-    ctx.shadowBlur  = 4;
-    ctx.fillRect(e.x, e.y - 10, EW * Math.max(0, e.hp / e.maxHp), 5);
-    ctx.shadowBlur  = 0;
+  // Enemy (ranged) bullets
+  for (const b of gp.enemyBullets) {
+    ctx.save();
+    ctx.shadowColor = '#22d3ee'; ctx.shadowBlur = 12;
+    ctx.fillStyle   = '#06b6d4';
+    ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#ecfeff';
+    ctx.beginPath(); ctx.arc(b.x - b.r*0.28, b.y - b.r*0.28, b.r*0.35, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
   }
 }
 
@@ -555,17 +769,27 @@ function _updatePlayer(dt, t) {
   let   rightBound  = canExit ? DOOR_X + PW + 40 : ROOM.x + ROOM.w - PW;
 
   const inLeftDoorLane  = p.y + PH / 2 > LEFT_DOOR_Y && p.y + PH / 2 < LEFT_DOOR_Y + LEFT_DOOR_H;
-  const canEnterDevRoom = gp.roomIndex === 0 && inLeftDoorLane;
+  const canEnterDevRoom = gp.floor === 1 && gp.roomIndex === 0 && inLeftDoorLane;
   const leftBound       = canEnterDevRoom ? ROOM.x - PW - 40 : ROOM.x;
 
   // Gojo Infinity barrier — blocks player from crossing while Gojo is not stunned
   if (gp.boss && gp.boss.type === 'gojo' && !gp.boss.isDead &&
-      gp.boss.stunTimer <= 0 && gp.boss.introTimer <= 0) {
+      gp.boss.stunTimer <= 0 && !gp.boss.returnLanding && gp.boss.introTimer <= 0) {
     rightBound = Math.min(rightBound, GOJO_BARRIER_X - PW);
   }
 
   p.x = Math.max(leftBound, Math.min(rightBound, p.x));
   p.y = Math.max(ROOM.y, Math.min(ROOM.y + ROOM.h - PH, p.y));
+
+  // One-time hint when player walks into the Infinity barrier
+  if (move.x > 0 && gp.boss && gp.boss.type === 'gojo' && !gp.boss.isDead &&
+      gp.boss.stunTimer <= 0 && !gp.boss.returnLanding && gp.boss.introTimer <= 0 &&
+      p.x >= GOJO_BARRIER_X - PW - 2 && !gp.hints.shown.infinity) {
+    gp.hints.shown.infinity = true;
+    gp.hints.text     = "I can't get close...\nnone of my attacks will ever reach him.\nThere has to be another way!";
+    gp.hints.timer    = 5.0;
+    gp.hints.maxTimer = 5.0;
+  }
 
   if (canExit && p.x > DOOR_X + 10) {
     _nextRoom();
@@ -624,7 +848,7 @@ function _handleAttack(dt, t, shoot) {
         } else {
           let bestSq = Infinity;
           for (const e of gp.enemies) {
-            const dx = e.x + EW/2 - pcx, dy = e.y + EH/2 - pcy;
+            const dx = e.x + e.w/2 - pcx, dy = e.y + e.h/2 - pcy;
             const sq = dx*dx + dy*dy;
             if (sq < bestSq) { bestSq = sq; lockTarget = e; lockType = 'enemy'; }
           }
@@ -645,6 +869,8 @@ function _handleAttack(dt, t, shoot) {
         trail: [],
         lockTarget, lockType,
         homingDelay: 0.18,
+        piercesLeft: (gp.power.id === 'spin' && gp.power.spinUpgraded) ? 1 : 0,
+        hitEnemies:  (gp.power.id === 'spin' && gp.power.spinUpgraded) ? new Set() : null,
       });
     }
 
@@ -660,9 +886,9 @@ function _handleAttack(dt, t, shoot) {
         } else {
           let nearestX = null, nearestY = null, bestSq = Infinity;
           for (const e of gp.enemies) {
-            const dx = e.x + EW/2 - pcx, dy = e.y + EH/2 - pcy;
+            const dx = e.x + e.w/2 - pcx, dy = e.y + e.h/2 - pcy;
             const sq = dx*dx + dy*dy;
-            if (sq < bestSq) { bestSq = sq; nearestX = e.x + EW/2; nearestY = e.y + EH/2; }
+            if (sq < bestSq) { bestSq = sq; nearestX = e.x + e.w/2; nearestY = e.y + e.h/2; }
           }
           if (gp.boss && !gp.boss.isDead && gp.boss.introTimer <= 0) {
             const dx = gp.boss.x + gp.boss.w/2 - pcx, dy = gp.boss.y + gp.boss.h/2 - pcy;
@@ -672,18 +898,18 @@ function _handleAttack(dt, t, shoot) {
           if (nearestX !== null) sweepAngle = Math.atan2(nearestY - pcy, nearestX - pcx);
         }
       }
-      const sweepR     = 130;
+      const sweepR     = (gp.power.id === 'spin' && gp.power.spinUpgraded) ? 162 : 130;
       const arcInner   = sweepR * 0.22;  // visual innerR
       const arcOuter   = sweepR * 0.94;  // visual outerR
       const sweepSpan  = Math.PI * 0.58;
       for (const e of gp.enemies) {
-        const dx   = e.x + EW / 2 - pcx;
-        const dy   = e.y + EH / 2 - pcy;
+        const dx   = e.x + e.w / 2 - pcx;
+        const dy   = e.y + e.h / 2 - pcy;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        const half = EW / 2;
+        const half = (e.w + e.h) / 4;
         if (dist >= arcInner - half && dist <= arcOuter + half &&
             Math.abs(_angleDiff(Math.atan2(dy, dx), sweepAngle)) < sweepSpan) {
-          _damageEnemy(e, _critDamage(char.stats.damage), 230);
+          _damageEnemy(e, _critDamage(char.stats.damage, e.x + e.w/2, e.y + e.h/2), 230);
         }
       }
       const bos = gp.boss;
@@ -694,7 +920,7 @@ function _handleAttack(dt, t, shoot) {
         const half = Math.max(bos.w, bos.h) / 2;
         if (bd >= arcInner - half && bd <= arcOuter + half &&
             Math.abs(_angleDiff(Math.atan2(bdy, bdx), sweepAngle)) < sweepSpan) {
-          _damageBoss(_critDamage(char.stats.damage));
+          _damageBoss(_critDamage(char.stats.damage, bos.x + bos.w/2, bos.y + bos.h/2));
         }
       }
       for (const a of gp.bossAttacks) {
@@ -704,7 +930,7 @@ function _handleAttack(dt, t, shoot) {
         const half = a.w / 2;
         if (sd >= arcInner - half && sd <= arcOuter + half &&
             Math.abs(_angleDiff(Math.atan2(sdy, sdx), sweepAngle)) < sweepSpan) {
-          _damageSHA(a, _critDamage(char.stats.damage));
+          _damageSHA(a, _critDamage(char.stats.damage, a.x + a.w/2, a.y + a.h/2));
         }
       }
       gp.activeAttacks.push({
@@ -776,15 +1002,15 @@ function _updateKaidoBreath(dt, t, shoot) {
       if (kb.tickTimer <= 0) {
         kb.tickTimer = 0.04;
         for (const e of gp.enemies) {
-          if (_enemyInBeam(beam, e)) _damageEnemy(e, _critDamage(gp.char.stats.damage * 0.05));
+          if (_enemyInBeam(beam, e, e.w, e.h)) _damageEnemy(e, _critDamage(gp.char.stats.damage * 0.05, e.x + e.w/2, e.y + e.h/2));
         }
         const bos = gp.boss;
         if (bos && !bos.isDead && bos.introTimer <= 0 && _enemyInBeam(beam, bos, bos.w, bos.h)) {
-          _damageBoss(_critDamage(gp.char.stats.damage * 0.05));
+          _damageBoss(_critDamage(gp.char.stats.damage * 0.05, bos.x + bos.w/2, bos.y + bos.h/2));
         }
         for (const a of gp.bossAttacks) {
           if (a.type === 'sha' && !a.exploding && _enemyInBeam(beam, a, a.w, a.h)) {
-            _damageSHA(a, _critDamage(gp.char.stats.damage * 0.05));
+            _damageSHA(a, _critDamage(gp.char.stats.damage * 0.05, a.x + a.w/2, a.y + a.h/2));
           }
         }
       }
@@ -951,7 +1177,8 @@ function _updateProjectiles(dt) {
       if (proj.trail.length > 28) proj.trail.shift();
     }
 
-    if (proj.type !== 'knife') proj.vy += GRAVITY * dt;
+    if (proj.type !== 'knife' || proj.bounced) proj.vy += GRAVITY * dt;
+    if (proj.bounced && proj.spinAngle !== undefined) proj.spinAngle += proj.spinRate * dt;
     proj.x   += proj.vx * dt;
     proj.y   += proj.vy * dt;
     proj.life -= dt;
@@ -967,14 +1194,14 @@ function _updateProjectiles(dt) {
           : t.hp > 0;
         if (alive) {
           const tx  = proj.lockType === 'red_ball' ? t.cx
-                    : proj.lockType === 'boss'      ? t.x + t.w/2 : t.x + EW/2;
+                    : proj.lockType === 'boss'      ? t.x + t.w/2 : t.x + t.w/2;
           const ty  = proj.lockType === 'red_ball' ? t.cy
-                    : proj.lockType === 'boss'      ? t.y + t.h/2 : t.y + EH/2;
+                    : proj.lockType === 'boss'      ? t.y + t.h/2 : t.y + t.h/2;
           const cx  = proj.x + proj.w/2, cy = proj.y + proj.h/2;
           const spd = Math.sqrt(proj.vx*proj.vx + proj.vy*proj.vy) || 1;
           const curAng  = Math.atan2(proj.vy, proj.vx);
           const wantAng = Math.atan2(ty - cy, tx - cx);
-          const maxTurn = (1.5 / spd) * 480 * dt;
+          const maxTurn = (1.5 / spd) * (gp.power.spinUpgraded ? 920 : 480) * dt;
           let delta = wantAng - curAng;
           while (delta >  Math.PI) delta -= Math.PI * 2;
           while (delta < -Math.PI) delta += Math.PI * 2;
@@ -989,23 +1216,66 @@ function _updateProjectiles(dt) {
         proj.y < ROOM.y || proj.y > ROOM.y + ROOM.h || proj.life <= 0) return false;
     for (const e of gp.enemies) {
       if (_rectsOverlap({ x: proj.x, y: proj.y, w: proj.w, h: proj.h },
-                         { x: e.x, y: e.y, w: EW, h: EH })) {
-        _damageEnemy(e, _critDamage(proj.damage));
+                         { x: e.x, y: e.y, w: e.w, h: e.h })) {
+        if (proj.hitEnemies && proj.hitEnemies.has(e)) continue;
+        _damageEnemy(e, _critDamage(proj.damage, e.x + e.w/2, e.y + e.h/2));
+        if (proj.piercesLeft > 0) {
+          proj.piercesLeft--;
+          if (proj.hitEnemies) proj.hitEnemies.add(e);
+          // Re-acquire nearest unhit enemy as the new homing target
+          if (proj.lockType === 'enemy') {
+            const pcx2 = proj.x + proj.w/2, pcy2 = proj.y + proj.h/2;
+            let newTarget = null, bestSq2 = Infinity;
+            for (const en of gp.enemies) {
+              if (proj.hitEnemies && proj.hitEnemies.has(en)) continue;
+              const dx2 = en.x + en.w/2 - pcx2, dy2 = en.y + en.h/2 - pcy2;
+              const sq2 = dx2*dx2 + dy2*dy2;
+              if (sq2 < bestSq2) { bestSq2 = sq2; newTarget = en; }
+            }
+            proj.lockTarget = newTarget;
+            if (!newTarget) proj.lockType = null;
+          }
+          break;
+        }
         return false;
       }
     }
     const bos = gp.boss;
+    // Infinity barrier: Dio knives ricochet off the barrier when Gojo is not stunned
+    if (proj.type === 'knife' && bos && bos.type === 'gojo' && !bos.isDead &&
+        bos.stunTimer <= 0 && !bos.returnLanding && bos.introTimer <= 0 &&
+        proj.x + proj.w >= GOJO_BARRIER_X) {
+      proj.x         = GOJO_BARRIER_X - proj.w;
+      proj.vx        = -(60 + Math.random() * 80);
+      proj.vy        = 320 + Math.random() * 180;
+      proj.bounced   = true;
+      proj.spinAngle = Math.atan2(proj.vy, proj.vx);   // start at current heading
+      proj.spinRate  = -(14 + Math.random() * 8);      // fast reverse spin (backspin)
+      proj.lockTarget = null;
+      bos.infinityTimer = 0.4;
+      bos.flashTimer    = 0.08;
+      bos.barrierHits.push({ y: proj.y + proj.h / 2, r: 0, alpha: 1.0, timer: 0.75 });
+      bos.infinityRipples.push({ r: 10, alpha: 0.9 });
+      bos.infinityRipples.push({ r: 10, alpha: 0.55 });
+      if (!gp.hints.shown.infinity) {
+        gp.hints.shown.infinity = true;
+        gp.hints.text     = "I can't get close...\nnone of my attacks will ever reach him.\nThere has to be another way!";
+        gp.hints.timer    = 5.0;
+        gp.hints.maxTimer = 5.0;
+      }
+      return true;
+    }
     if (bos && !bos.isDead && bos.introTimer <= 0 &&
         _rectsOverlap({ x: proj.x, y: proj.y, w: proj.w, h: proj.h },
                       { x: bos.x, y: bos.y, w: bos.w, h: bos.h })) {
-      _damageBoss(_critDamage(proj.damage));
+      _damageBoss(_critDamage(proj.damage, bos.x + bos.w/2, bos.y + bos.h/2));
       return false;
     }
     for (const a of gp.bossAttacks) {
       if (a.type === 'sha' && !a.exploding &&
           _rectsOverlap({ x: proj.x, y: proj.y, w: proj.w, h: proj.h },
                         { x: a.x, y: a.y, w: a.w, h: a.h })) {
-        _damageSHA(a, _critDamage(proj.damage));
+        _damageSHA(a, _critDamage(proj.damage, a.x + a.w/2, a.y + a.h/2));
         return false;
       }
     }
@@ -1073,7 +1343,7 @@ function _drawProjectiles(ctx, t) {
     // ── Knife blade ──────────────────────────────────────────────────────────
     ctx.save();
     ctx.translate(proj.x + proj.w / 2, proj.y + proj.h / 2);
-    ctx.rotate(Math.atan2(proj.vy, proj.vx));
+    ctx.rotate(proj.bounced ? proj.spinAngle : Math.atan2(proj.vy, proj.vx));
 
     // Blade
     ctx.shadowColor = '#c084fc';
@@ -1157,7 +1427,23 @@ function _drawActiveAttacks(ctx, t) {
 
       const nearH = a.nearThick / 2;
       const farH  = a.farThick  / 2;
-      const ox = a.ox, oy = a.oy, len = a.len;
+      const ox = a.ox, oy = a.oy;
+      // Clip beam at room walls (and Gojo's Infinity barrier for rightward fire)
+      let len = a.len;
+      if (a.dir === 'right') {
+        len = Math.min(len, ROOM.x + ROOM.w - ox);
+        const bos = gp.boss;
+        if (bos && bos.type === 'gojo' && !bos.isDead && bos.stunTimer <= 0 && !bos.returnLanding && bos.introTimer <= 0) {
+          len = Math.min(len, GOJO_BARRIER_X - ox);
+        }
+      } else if (a.dir === 'left') {
+        len = Math.min(len, ox - ROOM.x);
+      } else if (a.dir === 'down') {
+        len = Math.min(len, ROOM.y + ROOM.h - oy);
+      } else {
+        len = Math.min(len, oy - ROOM.y);
+      }
+      len = Math.max(0, len);
       const horiz = a.dir === 'right' || a.dir === 'left';
 
       // Build trapezoid corners (wide at mouth, narrow at tip)
@@ -1536,23 +1822,37 @@ function _angleDiff(a, b) {
 function _damageEnemy(e, dmg, knockSpeed = 160) {
   e.hp -= dmg;
   const p  = gp.player;
-  const dx = e.x + EW / 2 - (p.x + PW / 2);
-  const dy = e.y + EH / 2 - (p.y + PH / 2);
+  const dx = e.x + e.w / 2 - (p.x + PW / 2);
+  const dy = e.y + e.h / 2 - (p.y + PH / 2);
   const d  = Math.sqrt(dx * dx + dy * dy) || 1;
   e.vx = (dx / d) * knockSpeed;
   e.vy = (dy / d) * knockSpeed;
   e.knockbackTimer = 0.14;
 }
 
+function _hakiReflect(origDmg, enemyRef) {
+  if (!gp.power.hakiReflect) return;
+  const reflectDmg = Math.ceil(origDmg * 0.75);
+  if (enemyRef) {
+    enemyRef.hp -= reflectDmg;
+  } else if (gp.boss && !gp.boss.isDead && gp.boss.type !== 'gojo') {
+    _damageBoss(reflectDmg);
+  }
+}
+
 // ─── Powers ───────────────────────────────────────────────────────────────────
 
-function _critDamage(base) {
-  return (gp.power.id === 'awakening' && Math.random() < 0.20) ? base * 2 : base;
+function _critDamage(base, x, y) {
+  if (gp.power.id === 'awakening' && Math.random() < 0.20) {
+    if (x !== undefined) gp.critEffects.push({ x, y, timer: 0.38, maxTimer: 0.38 });
+    return base * 2;
+  }
+  return base;
 }
 
 function _initPowerState(power) {
   switch (power.id) {
-    case 'timestop':     return { cooldown: 0, cooldownMax: 10, frozen: false, frozenTimer: 0, duration: 3.0, ripples: [] };
+    case 'timestop':     return { cooldown: 0, cooldownMax: power.timestopUpgraded ? 6 : 10, frozen: false, frozenTimer: 0, duration: 3.0, ripples: [] };
     case 'ally_summon':  return { cooldown: 0, cooldownMax: 14, allies: [] };
     case 'king_crimson': return { cooldown: 0, cooldownMax: 5,  afterimages: [], glowTimer: 0, staticTimer: 0 };
     default:             return { cooldown: 0, cooldownMax: 0 };
@@ -1576,17 +1876,21 @@ function _activatePower() {
       break;
     }
     case 'ally_summon': {
-      const aw = 34, ah = 34;
-      const ax = Math.max(ROOM.x, Math.min(ROOM.x + ROOM.w - aw,
-        p.x + PW / 2 - aw / 2 + (Math.random() * 80 - 40)));
-      const ay = Math.max(ROOM.y, Math.min(ROOM.y + ROOM.h - ah,
-        p.y + PH / 2 - ah / 2 + (Math.random() * 80 - 40)));
-      ps.allies.push({
-        x: ax, y: ay, w: aw, h: ah,
-        hp: 80, maxHp: 80, speed: 115,
-        damage: gp.char.stats.damage * 0.39,
-        timer: 8.0, attackCooldown: 0,
-      });
+      const count = gp.power.allyUpgraded ? 2 : 1;
+      for (let ai = 0; ai < count; ai++) {
+        const aw = 34, ah = 34;
+        const ax = Math.max(ROOM.x, Math.min(ROOM.x + ROOM.w - aw,
+          p.x + PW / 2 - aw / 2 + (Math.random() * 80 - 40)));
+        const ay = Math.max(ROOM.y, Math.min(ROOM.y + ROOM.h - ah,
+          p.y + PH / 2 - ah / 2 + (Math.random() * 80 - 40)));
+        ps.allies.push({
+          x: ax, y: ay, w: aw, h: ah,
+          hp: 80, maxHp: 80, speed: 115,
+          damage: gp.char.stats.damage * 0.65,
+          timer: 8.0, attackCooldown: 0,
+          bullets: [],
+        });
+      }
       ps.cooldown = ps.cooldownMax * (gp.power.cooldownMult || 1);
       break;
     }
@@ -1597,6 +1901,7 @@ function _activatePower() {
       const dy   = (move.x !== 0 || move.y !== 0) ? move.y
                    : p.dir === 'up'   ? -1 : p.dir === 'down'  ? 1 : 0;
       // Multiple afterimages along the dash path for a rapid-movement look
+      const imgDamage = gp.power.kcUpgraded ? Math.round(gp.char.stats.damage * 0.65) : 0;
       for (let i = 0; i < 5; i++) {
         const frac   = i / 4;
         const jitter = (Math.random() - 0.5) * 8;
@@ -1605,6 +1910,9 @@ function _activatePower() {
           y:        p.y + dy * 200 * frac + jitter,
           alpha:    0.72 - frac * 0.25,
           fadeRate: 2.2 + frac * 1.2,
+          damage:   imgDamage,
+          hitEnemies: imgDamage > 0 ? new Set() : null,
+          hitBoss:  false,
         });
       }
       p.x         = Math.max(ROOM.x, Math.min(ROOM.x + ROOM.w - PW, p.x + dx * 200));
@@ -1628,6 +1936,11 @@ function _updatePowerState(dt) {
       if (ps.frozen) {
         ps.frozenTimer -= dt;
         if (ps.frozenTimer <= 0) { ps.frozen = false; ps.frozenTimer = 0; }
+        if (gp.power.timestopUpgraded) {
+          const tickDmg = 10 * dt;
+          for (const e of gp.enemies) { e.hp -= tickDmg; }
+          if (gp.boss && !gp.boss.isDead && gp.boss.type !== 'gojo') _damageBoss(tickDmg);
+        }
       }
       ps.ripples = ps.ripples.filter(rp => rp.alpha > 0);
       for (const rp of ps.ripples) {
@@ -1638,44 +1951,89 @@ function _updatePowerState(dt) {
     }
     case 'ally_summon': {
       ps.allies = ps.allies.filter(a => a.timer > 0 && a.hp > 0);
-      for (const a of ps.allies) {
-        a.timer -= dt;
-        if (a.attackCooldown > 0) a.attackCooldown -= dt;
-        let target = null, bestSq = Infinity, targetIsBoss = false;
+
+      // Spread targeting: assign each ally the nearest UNCLAIMED enemy
+      const claimed = new Set();
+      const allyTargets = ps.allies.map(a => {
+        let best = null, bestSq = Infinity;
         for (const e of gp.enemies) {
-          const dx = e.x + EW/2 - (a.x + a.w/2);
-          const dy = e.y + EH/2 - (a.y + a.h/2);
-          const sq = dx*dx + dy*dy;
-          if (sq < bestSq) { bestSq = sq; target = e; targetIsBoss = false; }
+          if (claimed.has(e)) continue;
+          const dx = e.x+e.w/2-(a.x+a.w/2), dy = e.y+e.h/2-(a.y+a.h/2);
+          const sq = dx*dx+dy*dy;
+          if (sq < bestSq) { bestSq = sq; best = e; }
         }
-        // Only attack Gojo when barrier is down (stunned); otherwise wander
-        const bossTargetable = gp.boss && !gp.boss.isDead &&
-          (gp.boss.type !== 'gojo' || gp.boss.stunTimer > 0);
-        if (bossTargetable) {
-          const dx = gp.boss.x + BW/2 - (a.x + a.w/2);
-          const dy = gp.boss.y + BH/2 - (a.y + a.h/2);
-          const sq = dx*dx + dy*dy;
-          if (sq < bestSq) { bestSq = sq; target = gp.boss; targetIsBoss = true; }
-        }
-        if (target) {
-          const tcx = targetIsBoss ? target.x + BW/2 : target.x + EW/2;
-          const tcy = targetIsBoss ? target.y + BH/2 : target.y + EH/2;
-          const dx = tcx - (a.x + a.w/2);
-          const dy = tcy - (a.y + a.h/2);
-          const d  = Math.sqrt(dx*dx + dy*dy) || 1;
-          a.x += (dx/d) * a.speed * dt;
-          a.y += (dy/d) * a.speed * dt;
-          const tRect = targetIsBoss
-            ? { x: target.x, y: target.y, w: BW, h: BH }
-            : { x: target.x, y: target.y, w: EW, h: EH };
-          if (a.attackCooldown <= 0 && _rectsOverlap({ x: a.x, y: a.y, w: a.w, h: a.h }, tRect)) {
-            if (targetIsBoss) _damageBoss(a.damage);
-            else _damageEnemy(target, a.damage);
-            a.attackCooldown = 0.55;
+        // Fallback: nearest enemy even if shared
+        if (!best) {
+          bestSq = Infinity;
+          for (const e of gp.enemies) {
+            const dx = e.x+e.w/2-(a.x+a.w/2), dy = e.y+e.h/2-(a.y+a.h/2);
+            const sq = dx*dx+dy*dy;
+            if (sq < bestSq) { bestSq = sq; best = e; }
           }
         }
-        a.x = Math.max(ROOM.x, Math.min(ROOM.x + ROOM.w - a.w, a.x));
-        a.y = Math.max(ROOM.y, Math.min(ROOM.y + ROOM.h - a.h, a.y));
+        if (best) claimed.add(best);
+        return best;
+      });
+
+      for (let i = 0; i < ps.allies.length; i++) {
+        const a = ps.allies[i];
+        if (!a.bullets) a.bullets = [];
+        a.timer -= dt;
+        if (a.attackCooldown > 0) a.attackCooldown -= dt;
+
+        // Tick ally bullets
+        a.bullets = a.bullets.filter(b => {
+          b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+          if (b.life <= 0 || b.x < ROOM.x || b.x > ROOM.x+ROOM.w ||
+              b.y < ROOM.y || b.y > ROOM.y+ROOM.h) return false;
+          for (const e of gp.enemies) {
+            if (e.x < b.x+b.r && e.x+e.w > b.x-b.r && e.y < b.y+b.r && e.y+e.h > b.y-b.r) {
+              _damageEnemy(e, b.damage); return false;
+            }
+          }
+          const bos = gp.boss;
+          if (bos && !bos.isDead && bos.x < b.x+b.r && bos.x+bos.w > b.x-b.r &&
+              bos.y < b.y+b.r && bos.y+bos.h > b.y-b.r) {
+            _damageBoss(b.damage); return false;
+          }
+          return true;
+        });
+
+        // Determine target
+        let target = allyTargets[i];
+        let targetIsBoss = false;
+        if (target && target.hp <= 0) target = null;
+        if (!target) {
+          const bossTargetable = gp.boss && !gp.boss.isDead &&
+            (gp.boss.type !== 'gojo' || gp.boss.stunTimer > 0);
+          if (bossTargetable) { target = gp.boss; targetIsBoss = true; }
+        }
+
+        const SHOOT_RANGE = 145;
+        if (target) {
+          const tcx = targetIsBoss ? target.x+BW/2 : target.x+target.w/2;
+          const tcy = targetIsBoss ? target.y+BH/2 : target.y+target.h/2;
+          const dx = tcx-(a.x+a.w/2), dy = tcy-(a.y+a.h/2);
+          const d  = Math.sqrt(dx*dx+dy*dy) || 1;
+          if (d > SHOOT_RANGE) {
+            a.x += (dx/d) * a.speed * dt;
+            a.y += (dy/d) * a.speed * dt;
+          }
+          if (a.attackCooldown <= 0 && d <= SHOOT_RANGE + 30) {
+            const spd = 320;
+            a.bullets.push({ x: a.x+a.w/2, y: a.y+a.h/2, vx: (dx/d)*spd, vy: (dy/d)*spd, damage: a.damage, r: 5, life: 1.4 });
+            a.attackCooldown = 0.70;
+          }
+        } else {
+          // No target: slowly drift toward room center
+          const rcx = ROOM.x+ROOM.w/2, rcy = ROOM.y+ROOM.h/2;
+          const ddx = rcx-(a.x+a.w/2), ddy = rcy-(a.y+a.h/2);
+          const dd = Math.sqrt(ddx*ddx+ddy*ddy) || 1;
+          if (dd > 60) { a.x += (ddx/dd)*a.speed*0.35*dt; a.y += (ddy/dd)*a.speed*0.35*dt; }
+        }
+
+        a.x = Math.max(ROOM.x, Math.min(ROOM.x+ROOM.w-a.w, a.x));
+        a.y = Math.max(ROOM.y, Math.min(ROOM.y+ROOM.h-a.h, a.y));
       }
       break;
     }
@@ -1683,11 +2041,29 @@ function _updatePowerState(dt) {
       ps.afterimages = ps.afterimages.filter(img => img.alpha > 0);
       for (const img of ps.afterimages) {
         img.alpha = Math.max(0, img.alpha - img.fadeRate * dt);
+        if (img.damage > 0 && img.hitEnemies) {
+          const ir = { x: img.x, y: img.y, w: PW, h: PH };
+          for (const e of gp.enemies) {
+            if (!img.hitEnemies.has(e) && _rectsOverlap(ir, { x: e.x, y: e.y, w: e.w, h: e.h })) {
+              img.hitEnemies.add(e);
+              _damageEnemy(e, img.damage);
+            }
+          }
+          if (!img.hitBoss && gp.boss && !gp.boss.isDead &&
+              _rectsOverlap(ir, { x: gp.boss.x, y: gp.boss.y, w: gp.boss.w, h: gp.boss.h })) {
+            img.hitBoss = true;
+            _damageBoss(img.damage);
+          }
+        }
       }
       if (ps.glowTimer   > 0) ps.glowTimer   = Math.max(0, ps.glowTimer   - dt);
       if (ps.staticTimer > 0) ps.staticTimer = Math.max(0, ps.staticTimer - dt);
       break;
     }
+  }
+  // Tick crit flash effects (Awakening)
+  if (gp.critEffects && gp.critEffects.length > 0) {
+    gp.critEffects = gp.critEffects.filter(c => { c.timer -= dt; return c.timer > 0; });
   }
 }
 
@@ -1826,7 +2202,7 @@ function _drawPowerEffects(ctx, t) {
           ctx.save();
           ctx.shadowColor = '#93c5fd';
           ctx.shadowBlur  = 12;
-          const ecx = e.x + EW / 2, ecy = e.y + EH / 2;
+          const ecx = e.x + e.w / 2, ecy = e.y + e.h / 2;
           for (let i = 0; i < 6; i++) {
             const a   = (i / 6) * Math.PI * 2;
             const len = i % 2 === 0 ? 14 : 9;
@@ -1892,6 +2268,15 @@ function _drawPowerEffects(ctx, t) {
         ctx.shadowBlur  = 0;
         ctx.globalAlpha = 1;
         ctx.restore();
+        // Ally bullets
+        for (const b of (a.bullets || [])) {
+          ctx.save();
+          ctx.shadowColor = '#34d399'; ctx.shadowBlur = 8;
+          ctx.fillStyle   = '#34d399';
+          ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill();
+          ctx.shadowBlur = 0;
+          ctx.restore();
+        }
       }
       break;
     }
@@ -1993,6 +2378,32 @@ function _drawPowerEffects(ctx, t) {
     }
   }
 
+  // Crit flash effects (Awakening — drawn regardless of current case)
+  if (gp.critEffects) {
+    for (const ce of gp.critEffects) {
+      const prog  = 1 - ce.timer / ce.maxTimer;
+      const alpha = ce.timer / ce.maxTimer;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = '#fde68a'; ctx.lineWidth = 2;
+      ctx.shadowColor = '#fde68a'; ctx.shadowBlur = 10;
+      for (let k = 0; k < 8; k++) {
+        const ang = (k / 8) * Math.PI * 2;
+        const len = 5 + prog * 16;
+        ctx.beginPath();
+        ctx.moveTo(ce.x + Math.cos(ang) * 3, ce.y + Math.sin(ang) * 3);
+        ctx.lineTo(ce.x + Math.cos(ang) * len, ce.y + Math.sin(ang) * len);
+        ctx.stroke();
+      }
+      ctx.font = 'bold 13px "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#fde68a'; ctx.shadowBlur = 12;
+      ctx.fillText('CRIT!', ce.x, ce.y - 12 - prog * 14);
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
+  }
+
   // Cooldown recharge arc below player shadow (active powers only)
   if (gp.power.type === 'active' && ps.cooldown > 0 && ps.cooldownMax > 0) {
     const cx    = p.x + PW / 2;
@@ -2080,26 +2491,38 @@ function _spawnBoss(type) {
       x: GOJO_ANCHOR_X,
       y: GOJO_Y_LANES[1],
       moveTarget: { x: GOJO_ANCHOR_X, y: GOJO_Y_LANES[1] },
-      // Fixed HP — not DPS-scaled; gates drive all damage
-      hp: 1000, maxHp: 1000,
+      // HP scaled per character so each 10s stun window is equally challenging
+      // Kaido ~15 DPS → 500 HP (125/window), Dio ~50 DPS → 1400 (350/window), Levi ~56 DPS → 1600 (400/window)
+      ...(() => {
+        const max = gp.char.id === 'kaido' ? 500 : gp.char.id === 'dio' ? 1400 : 1600;
+        return {
+          hp: max, maxHp: max,
+          gateHPs: [max, Math.round(max * 0.75), Math.round(max * 0.50), Math.round(max * 0.25), 0],
+        };
+      })(),
       // Infinity gate system
       gateIndex:    0,
-      gateHPs:      [1000, 750, 500, 250, 0],
       rallyBounces: [1, 2, 3, 4],
       immune: true,
       infinityTimer:   0,
       infinityRipples: [],
-      barrierHits:     [],        // [{y, r, alpha, timer}] — dramatic barrier reflections
-      stunTimer:    0,
-      stunStarAngle: 0,           // continuously advancing star spin angle
-      stunHitsLeft: 0,            // hits needed to end stun (count-based, not timer)
-      stunHitCD:    0,            // cooldown between registered stun hits
+      barrierHits:     [],
+      // Stun: timed 10s window — gate advances only if player deals enough damage
+      stunTimer:     0,
+      stunDuration:  10,
+      stunStarAngle: 0,
+      // Return animation (after stun ends)
+      returnLanding:  false,
+      returnTimer:    0,
+      itDeparted:     false,
+      itDepartX:      0, itDepartY: 0,
+      returnTargetX:  0, returnTargetY: 0,
       // Red Volleyball
       redCooldown:    0,
-      redCooldownMax: 4,          // was 9
+      redCooldownMax: 3,
       redActive:      false,
       // Attack scheduling
-      attackTimer:  2.0,
+      attackTimer:  1.2,
       activeAttack: null,
       // Hollow Purple state machine
       purpleState:       null,
@@ -2111,6 +2534,7 @@ function _spawnBoss(type) {
       voidTimer:       0,
       voidMaxTimer:    0,
       voidHands:       [],   // [{angle, reach, maxReach, hitCooldown}]
+      voidCooldown:    0,    // cooldown after each void ends before it can fire again
       // Void tell
       voidTellTimer:    0,
       voidTellDuration: 2.0,
@@ -2140,22 +2564,36 @@ function _damageBoss(dmg) {
       b.infinityRipples.push({ r: 10, alpha: 0.55 });
       if (!gp.hints.shown.infinity) {
         gp.hints.shown.infinity = true;
-        gp.hints.text    = 'My attacks just bounce right off...\nI need to find another way!';
-        gp.hints.timer   = 4.5;
-        gp.hints.maxTimer = 4.5;
+        gp.hints.text     = "I can't get close...\nnone of my attacks will ever reach him.\nThere has to be another way!";
+        gp.hints.timer    = 5.0;
+        gp.hints.maxTimer = 5.0;
       }
       return;
     }
-    // Stunned — Infinity is down. HP is already snapped to the current gate threshold
-    // by _gojoCompleteRally, so gateFloor = gateHPs[gateIndex] prevents further drain.
-    // This makes gates 1-3 reliable regardless of character DPS.
-    const gateFloor = b.gateHPs[b.gateIndex] ?? 0;
+    // Stunned — deal damage floored at the NEXT gate threshold.
+    // Gate clears when HP reaches that floor; kill when floor is 0.
+    const nextIndex = b.gateIndex + 1;
+    const gateFloor = b.gateHPs[nextIndex] ?? 0;
     b.hp = Math.max(gateFloor, b.hp - dmg);
     b.flashTimer = 0.14;
-    if (b.stunHitCD <= 0) {
-      b.stunHitsLeft--;
-      b.stunHitCD = 1.2;   // throttle — absorbs Kaido beam ticks
-      if (b.stunHitsLeft <= 0) b.stunTimer = 0;  // 3 hits ends the stun window
+    if (b.hp <= gateFloor) {
+      if (gateFloor === 0) {
+        // Kill window reached — death
+        b.hp = 0;
+        b.isDead = true;
+        b.stunTimer = 0;
+      } else {
+        // Gate cleared — advance and start return animation
+        b.gateIndex = nextIndex;
+        b.stunTimer = 0;
+        b.returnLanding = true;
+        b.returnTimer   = 0;
+        b.itDeparted    = false;
+        b.itDepartX     = b.x + b.w / 2;
+        b.itDepartY     = b.y + b.h / 2;
+        b.returnTargetX = GOJO_ANCHOR_X;
+        b.returnTargetY = GOJO_Y_LANES[1];
+      }
     }
     return;
   }
@@ -2314,7 +2752,8 @@ function _updateKiraBoss(dt, t, b) {
     if (gp.power.id === 'haki') dmg = Math.ceil(dmg * 0.65);
     p.hp -= dmg;
     p.iFrames = 1.2;
-    if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; }
+    _hakiReflect(18, null);
+    if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; gp.killSource = 'kira_contact'; }
   }
 
   // ── Bomb placement ──
@@ -2367,7 +2806,8 @@ function _updateKiraBoss(dt, t, b) {
             if (gp.power.id === 'haki') dmg = Math.ceil(dmg * 0.65);
             gp.player.hp -= dmg;
             gp.player.iFrames = 0.8;
-            if (gp.player.hp <= 0) { gp.player.hp = 0; gp.gameOver = true; }
+            _hakiReflect(a.damage, null);
+            if (gp.player.hp <= 0) { gp.player.hp = 0; gp.gameOver = true; gp.killSource = 'bomb'; }
           }
         }
       } else {
@@ -2408,7 +2848,8 @@ function _updateKiraBoss(dt, t, b) {
         if (gp.power.id === 'haki') dmg = Math.ceil(dmg * 0.65);
         gp.player.hp -= dmg;
         gp.player.iFrames = 1.0;
-        if (gp.player.hp <= 0) { gp.player.hp = 0; gp.gameOver = true; }
+        _hakiReflect(40, null);
+        if (gp.player.hp <= 0) { gp.player.hp = 0; gp.gameOver = true; gp.killSource = 'sha'; }
         a.exploding  = true;
         a.playerKill = true;
         a.explodeTimer = a.maxExplode;
@@ -2466,7 +2907,8 @@ function _updateEnelBoss(dt, t, b) {
     if (gp.power.id === 'haki') dmg = Math.ceil(dmg * 0.65);
     p.hp -= dmg;
     p.iFrames = 1.2;
-    if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; }
+    _hakiReflect(15, null);
+    if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; gp.killSource = 'enel_contact'; }
   }
 
   // ── Lightning Beam ──
@@ -2592,7 +3034,8 @@ function _updateEnelBoss(dt, t, b) {
               if (gp.power.id === 'haki') dmg = Math.ceil(dmg * 0.65);
               p.hp -= dmg;
               p.iFrames = 0.65;
-              if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; }
+              _hakiReflect(a.damage, null);
+              if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; gp.killSource = 'beam'; }
             }
           }
         }
@@ -2622,7 +3065,8 @@ function _updateEnelBoss(dt, t, b) {
                 if (gp.power.id === 'haki') dmg = Math.ceil(dmg * 0.65);
                 p.hp -= dmg;
                 p.iFrames = 0.65;
-                if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; }
+                _hakiReflect(a.damage, null);
+                if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; gp.killSource = 'grid'; }
                 break;
               }
             }
@@ -2661,31 +3105,61 @@ function _updateGojoBoss(dt, t, b) {
   for (const h of b.barrierHits) { h.timer -= dt; h.alpha = Math.max(0, h.timer / 0.75); }
   b.barrierHits = b.barrierHits.filter(h => h.timer > 0);
 
-  // Stun (after successful rally — Gojo can't move or attack)
+  // Stun window — 10s timed; gate clears only if player deals enough damage
   if (b.stunTimer > 0) {
+    b.stunTimer -= dt;
     b.stunStarAngle += dt * 3.8;
-    if (b.stunHitCD > 0) b.stunHitCD -= dt;
 
     // Spin landing: lerp Gojo from launch position to center with ease-out cubic
     if (b.spinLanding && b.spinTimer !== undefined) {
       b.spinTimer += dt;
       if (b.spinTimer < b.spinDuration) {
         const tNorm = b.spinTimer / b.spinDuration;
-        const t3    = 1 - Math.pow(1 - tNorm, 3);  // ease-out cubic
+        const t3    = 1 - Math.pow(1 - tNorm, 3);
         b.x = b.spinStartX + (b.spinTargetX - b.spinStartX) * t3;
         b.y = b.spinStartY + (b.spinTargetY - b.spinStartY) * t3;
-        b.spinAngle = tNorm * Math.PI * 4;  // two full rotations
+        b.spinAngle = tNorm * Math.PI * 4;
       } else {
         b.x = b.spinTargetX;
         b.y = b.spinTargetY;
         b.spinLanding = false;
       }
     } else {
-      b.x = ROOM.x + ROOM.w / 2 - b.w / 2;  // arena center X (barrier hidden during stun)
-      b.y = ROOM.y + ROOM.h / 2 - b.h / 2;  // arena center Y
+      b.x = ROOM.x + ROOM.w / 2 - b.w / 2;
+      b.y = ROOM.y + ROOM.h / 2 - b.h / 2;
     }
 
     _gojoTickBossAttacks(dt, b, p);
+
+    // Stun timer just expired without gate being cleared — start IT return
+    if (b.stunTimer <= 0 && !b.isDead && !b.returnLanding) {
+      b.returnLanding = true;
+      b.returnTimer   = 0;
+      b.itDeparted    = false;
+      b.itDepartX     = b.x + b.w / 2;
+      b.itDepartY     = b.y + b.h / 2;
+      b.returnTargetX = GOJO_ANCHOR_X;
+      b.returnTargetY = GOJO_Y_LANES[1];
+    }
+    return;
+  }
+
+  // Instant Transmission return — departure flash, snap, arrival flash
+  if (b.returnLanding) {
+    b.returnTimer += dt;
+    if (!b.itDeparted && b.returnTimer >= 0.28) {
+      // Snap to anchor mid-animation
+      b.itDeparted = true;
+      b.x = b.returnTargetX;
+      b.y = b.returnTargetY;
+    }
+    if (b.returnTimer >= 0.58) {
+      b.returnLanding = false;
+      b.itDeparted    = false;
+      b.x = b.returnTargetX;
+      b.y = b.returnTargetY;
+      b.attackTimer = 1.2;
+    }
     return;
   }
 
@@ -2722,12 +3196,18 @@ function _updateGojoBoss(dt, t, b) {
           if (gp.power.id === 'haki') dmg = Math.ceil(dmg * 0.65);
           p.hp -= dmg; p.iFrames = 0.6;
           hand.hitCooldown = 1.0;
-          if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; }
+          _hakiReflect(18, null);
+          if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; gp.killSource = 'void'; }
         }
       }
     }
-    if (b.voidTimer <= 0) b.voidHands = [];
+    if (b.voidTimer <= 0) {
+      b.voidHands = [];
+      // Resume normal attack scheduling after void (give 1-2s breathing room)
+      if (b.attackTimer > 10) b.attackTimer = 1.0 + Math.random() * 1.0;
+    }
   }
+  if (b.voidCooldown > 0) b.voidCooldown -= dt;
 
   // Void tell timer — activates void when it expires
   if (b.voidTellTimer > 0) {
@@ -2759,11 +3239,11 @@ function _updateGojoBoss(dt, t, b) {
       const newY = others[Math.floor(Math.random() * others.length)];
       b.y          = newY;   // instant teleport snap
       b.moveTarget = { x: GOJO_ANCHOR_X, y: newY };
-      b.moveTimer  = (b.phase === 2 ? 2.5 : 4.0) + Math.random() * 2.0;
+      b.moveTimer  = (b.phase === 2 ? 1.5 : 3.0) + Math.random() * (b.phase === 2 ? 1.3 : 1.5);
     }
   }
 
-  b.x = GOJO_ANCHOR_X;
+  if (!b.returnLanding) b.x = GOJO_ANCHOR_X;
 
   // ── Contact damage ──
   if (p.iFrames <= 0 &&
@@ -2771,7 +3251,8 @@ function _updateGojoBoss(dt, t, b) {
     let dmg = 16;
     if (gp.power.id === 'haki') dmg = Math.ceil(dmg * 0.65);
     p.hp -= dmg; p.iFrames = 1.2;
-    if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; }
+    _hakiReflect(16, null);
+    if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; gp.killSource = 'gojo_contact'; }
   }
 
   // ── Attack scheduling ──
@@ -2791,7 +3272,7 @@ function _gojoPickAttack(b, p) {
     if (b.phase === 2) {
       // Only Blue allowed in phase 2 during Void
       _gojoFireBlue(b, p);
-      b.attackTimer = 4.0 + Math.random() * 2.0;
+      b.attackTimer = 2.0 + Math.random() * 1.5;
     } else {
       b.attackTimer = 1.0;  // check again soon
     }
@@ -2801,6 +3282,7 @@ function _gojoPickAttack(b, p) {
   // All attacks available from any lane position
   const available = ['hollow_purple', 'blue'];
   if (b.redCooldown <= 0 && !b.redActive) available.push('red');
+  if (b.phase === 2 && b.voidCooldown <= 0) available.push('void');
   const pick = available[Math.floor(Math.random() * available.length)];
 
   if (pick === 'hollow_purple') {
@@ -2818,13 +3300,20 @@ function _gojoPickAttack(b, p) {
 
   } else if (pick === 'blue') {
     _gojoFireBlue(b, p);
-    b.attackTimer = (b.phase === 2 ? 2.0 : 3.0) + Math.random() * 1.0;
+    b.attackTimer = (b.phase === 2 ? 0.8 : 1.8) + Math.random() * (b.phase === 2 ? 0.6 : 0.8);
+
+  } else if (pick === 'void') {
+    b.voidTellTimer    = 2.0;
+    b.voidTellDuration = 2.0;
+    b.pendingVoidDur   = 5.5 + Math.random() * 2.5;
+    b.voidCooldown     = 25 + Math.random() * 5;
+    b.attackTimer      = 999; // suspend normal scheduling until void ends
 
   } else {
     _gojoFireRed(b, p);
     b.redActive   = true;
     b.redCooldown = b.redCooldownMax;
-    b.attackTimer = 3.5 + Math.random() * 1.5;
+    b.attackTimer = (b.phase === 2 ? 1.4 : 2.2) + Math.random() * 0.8;
   }
 }
 
@@ -2835,7 +3324,7 @@ function _gojoUpdateActiveAttack(dt, b, p) {
     // Instant snap to target lane, then immediately begin charging
     b.y           = b.moveTarget.y;
     b.purpleState = 'charging';
-    b.purpleChargeTimer = 1.6;
+    b.purpleChargeTimer = b.phase === 2 ? 1.0 : 1.3;
 
   } else if (b.purpleState === 'charging') {
     b.purpleChargeTimer -= dt;
@@ -2845,13 +3334,13 @@ function _gojoUpdateActiveAttack(dt, b, p) {
       gp.bossAttacks.push({
         type: 'purple_ball',
         cx: b.x + b.w / 2, cy: fireCY,
-        vx: -1600,         // fast — crosses room in ~0.7s
+        vx: b.phase === 2 ? -2200 : -1900,
         third: b.purpleThird,
         r: 58,
         damage: b.phase === 2 ? 130 : 110,
         struck: false, done: false,
       });
-      b.purpleFireTimer = 1.6;
+      b.purpleFireTimer = b.phase === 2 ? 0.8 : 1.1;
     }
 
   } else if (b.purpleState === 'firing') {
@@ -2859,30 +3348,47 @@ function _gojoUpdateActiveAttack(dt, b, p) {
     if (b.purpleFireTimer <= 0) {
       b.purpleState  = null;
       b.activeAttack = null;
-      b.attackTimer  = (b.phase === 2 ? 0.8 : 1.5) + Math.random() * 0.8;
+      b.attackTimer  = (b.phase === 2 ? 0.3 : 0.9) + Math.random() * (b.phase === 2 ? 0.5 : 0.6);
     }
   }
 }
 
 function _gojoFireBlue(b, p) {
-  // Spawns on the LEFT wall; pulls player rightward toward Gojo for its lifetime
+  // Phase 1: single orb at center of left wall.
+  // Phase 2: two orbs at top-left and bottom-left corners.
   const count = b.phase === 2 ? 2 : 1;
-  const life  = 5.5 + Math.random() * 2.0;
-  const yStep = ROOM.h / (count + 1);
-  for (let i = 0; i < count; i++) {
-    const cy = ROOM.y + yStep * (i + 1);
+  const life  = 6.0 + Math.random() * 2.0;
+  const pull  = b.phase === 2 ? 44 : 34;
+
+  const positions = count === 1
+    ? [{ cy: ROOM.y + ROOM.h / 2, pvx: pull, pvy: 0 }]
+    : [
+        { cy: ROOM.y + ROOM.h * 0.18, pvx: pull * 0.85, pvy:  pull * 0.5 },  // top-left → pull right+down
+        { cy: ROOM.y + ROOM.h * 0.82, pvx: pull * 0.85, pvy: -pull * 0.5 },  // bottom-left → pull right+up
+      ];
+
+  for (const pos of positions) {
     gp.bossAttacks.push({
-      type:        'blue_orb',
-      cx:          ROOM.x + 18,   // pinned to left wall
-      cy,
-      r:           22,
+      type:          'blue_orb',
+      cx:            ROOM.x + 18,
+      cy:            pos.cy,
+      r:             22,
       life,
-      maxLife:     life,
-      pullStrength: b.phase === 2 ? 40 : 28,   // rightward px/s pull on player
-      damage:      b.phase === 2 ? 20 : 15,    // contact damage
-      struck:      false,
-      done:        false,
-      windParticles: [],
+      maxLife:       life,
+      pullStrength:  pull,
+      pullVX:        pos.pvx,
+      pullVY:        pos.pvy,
+      damage:        b.phase === 2 ? 20 : 15,
+      struck:        false,
+      done:          false,
+      windParticles:     [],
+      spawnTimer:        0.55,
+      spawnDuration:     0.55,
+      pulseTimer:        1.0 + Math.random() * 0.5,  // delay before first pulse
+      pulseActive:       false,
+      pulseActiveTimer:  0,
+      pulseActiveDur:    0.18,
+      pulseInterval:     1.5 + Math.random() * 0.5,  // 1.5–2.0s between pulses
     });
   }
 }
@@ -2910,6 +3416,7 @@ function _gojoFireRed(b, p) {
     hitCooldown: 0,
     damage: 28,
     done: false,
+    crossedBarrier: false,
   });
 }
 
@@ -2968,37 +3475,21 @@ function _gojoRedHitByPlayer(rb) {
 }
 
 function _gojoCompleteRally(b) {
-  b.gateIndex++;
-  // Snap HP to the new gate threshold immediately (reliable across all characters).
-  // gateFloor in _damageBoss is set to gateHPs[gateIndex] so it won't go lower during stun.
-  b.hp    = b.gateHPs[b.gateIndex];
-  b.phase = b.gateIndex >= 2 ? 2 : 1;
-
   b.flashTimer = 0.35;
   b.redActive  = false;
 
-  // Kill gate: HP snapped to 0 → trigger death immediately, no stun
-  if (b.hp <= 0) {
-    b.isDead = true;
-    b.hp     = 0;
-    return;
-  }
-
-  // Non-kill gate: 3-hit stun window (player gets a vulnerability phase)
-  b.stunTimer     = 999;
-  b.stunHitsLeft  = 3;
-  b.stunHitCD     = 0;
+  // Start timed stun window — gate index only advances if player deals
+  // enough damage to reach the next gate floor within this window.
+  b.stunTimer     = b.stunDuration ?? 10;
   b.stunStarAngle = 0;
-  // Snap Gojo to arena center for the stun window
-  b.x = ROOM.x + ROOM.w / 2 - b.w / 2;
-  b.y = ROOM.y + ROOM.h / 2 - b.h / 2;
 
-  // Trigger Infinite Void after stun ends — uses 2s "Domain Expansion" tell first
-  const voidDur = 5.5 + Math.random() * 2.5;
-  b.voidTellTimer    = 2.0;
-  b.voidTellDuration = 2.0;
-  b.pendingVoidDur   = voidDur;
-  // voidTimer / voidMaxTimer / voidHands are set when the tell expires
+  // Clear all in-flight attacks so nothing lingers during the stun
+  gp.bossAttacks = gp.bossAttacks.filter(a => a.type === 'red_ball' && !a.done);
+  b.activeAttack      = null;
+  b.purpleState       = null;
+  b.purpleChargeTimer = 0;
+  b.purpleFireTimer   = 0;
+  b.attackTimer       = 0;
 }
 
 function _gojoTickBossAttacks(dt, b, p) {
@@ -3017,7 +3508,8 @@ function _gojoTickBossAttacks(dt, b, p) {
           let dmg = a.damage;
           if (gp.power.id === 'haki') dmg = Math.ceil(dmg * 0.65);
           p.hp -= dmg; p.iFrames = 0.7;
-          if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; }
+          _hakiReflect(a.damage, null);
+          if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; gp.killSource = 'hollow_purple'; }
         }
       }
       if (a.cx + a.r < ROOM.x) a.done = true;
@@ -3026,21 +3518,49 @@ function _gojoTickBossAttacks(dt, b, p) {
 
     // ── Blue orb (left-wall gravity distortion — pulls player rightward) ──
     if (a.type === 'blue_orb') {
+      // Tick spawn animation first; pull/damage/particles are suppressed until fully materialized
+      if (a.spawnTimer > 0) {
+        a.spawnTimer -= dt;
+        continue;
+      }
+
       a.life -= dt;
       if (a.life <= 0) { a.done = true; continue; }
 
-      // Rightward pull — pushes player toward Gojo's side
-      p.x += a.pullStrength * dt;
+      // Constant baseline pull — always active at full strength
+      p.x += (a.pullVX ?? a.pullStrength) * dt;
+      p.y += (a.pullVY ?? 0) * dt;
 
-      // Spawn wind particles that stream rightward from near the orb
+      // Pulse spike — small extra nudge on top of baseline every ~1.5-2s
+      if (a.pulseActive) {
+        a.pulseActiveTimer -= dt;
+        if (a.pulseActiveTimer <= 0) {
+          a.pulseActive = false;
+          a.pulseTimer  = a.pulseInterval;
+        } else {
+          p.x += (a.pullVX ?? a.pullStrength) * 0.30 * dt;
+          p.y += (a.pullVY ?? 0) * 0.30 * dt;
+        }
+      } else {
+        a.pulseTimer -= dt;
+        if (a.pulseTimer <= 0) {
+          a.pulseActive      = true;
+          a.pulseActiveTimer = a.pulseActiveDur;
+        }
+      }
+
+      // Spawn flake particles that burst outward in all directions from the orb center
       if (!a.windParticles) a.windParticles = [];
-      if (Math.random() < 0.55) {
-        const oy = a.cy + (Math.random() - 0.5) * 80;
-        a.windParticles.push({ x: a.cx + Math.random() * 30, y: oy, vx: 180 + Math.random() * 120, alpha: 0.65, life: 0.5 + Math.random() * 0.3 });
+      const flakeCount = Math.random() < 0.5 ? 3 : 2;
+      for (let fi = 0; fi < flakeCount; fi++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 80 + Math.random() * 120;
+        a.windParticles.push({ x: a.cx, y: a.cy, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, alpha: 0.65, life: 0.4 + Math.random() * 0.3 });
       }
       for (const wp of a.windParticles) {
         wp.x += wp.vx * dt;
-        wp.life -= dt; wp.alpha = Math.max(0, wp.life / 0.6 * 0.65);
+        wp.y += wp.vy * dt;
+        wp.life -= dt; wp.alpha = Math.max(0, wp.life / 0.5 * 0.65);
       }
       a.windParticles = a.windParticles.filter(wp => wp.life > 0);
 
@@ -3052,7 +3572,8 @@ function _gojoTickBossAttacks(dt, b, p) {
           let dmg = a.damage;
           if (gp.power.id === 'haki') dmg = Math.ceil(dmg * 0.65);
           p.hp -= dmg; p.iFrames = 0.7;
-          if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; }
+          _hakiReflect(a.damage, null);
+          if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; gp.killSource = 'blue_orb'; }
         }
       }
       // Allow re-striking after brief cooldown
@@ -3083,6 +3604,7 @@ function _gojoTickBossAttacks(dt, b, p) {
           const d  = Math.sqrt(dx*dx+dy*dy) || 1;
           a.vx = (dx/d)*a.speed; a.vy = (dy/d)*a.speed;
           a.dir = 'toward_player';
+          a.crossedBarrier = false;
         }
         continue;
       }
@@ -3093,8 +3615,10 @@ function _gojoTickBossAttacks(dt, b, p) {
       if (a.cy + a.r > ROOM.y + ROOM.h)    { a.cy = ROOM.y + ROOM.h - a.r;    a.vy = -Math.abs(a.vy); }
 
       if (a.dir === 'toward_player') {
-        // Check player attack (returns the ball)
-        if (a.hitCooldown <= 0 && _gojoRedHitByPlayer(a)) {
+        // Mark once the ball has fully crossed the barrier into the player's zone
+        if (!a.crossedBarrier && a.cx + a.r < GOJO_BARRIER_X) a.crossedBarrier = true;
+        // Check player attack (returns the ball) — only after it crosses the barrier
+        if (a.crossedBarrier && a.hitCooldown <= 0 && _gojoRedHitByPlayer(a)) {
           a.hitCooldown = 0.25;
           a.bounceCount++;
           // Cheese punishment: player hit from too close to the Infinity barrier
@@ -3127,7 +3651,8 @@ function _gojoTickBossAttacks(dt, b, p) {
           let dmg = a.damage;
           if (gp.power.id === 'haki') dmg = Math.ceil(dmg * 0.65);
           p.hp -= dmg; p.iFrames = 0.8;
-          if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; }
+          _hakiReflect(a.damage, null);
+          if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; gp.killSource = 'red_ball'; }
           a.done = true; b.redActive = false;
           continue;
         }
@@ -3179,7 +3704,8 @@ function _gojoTickBossAttacks(dt, b, p) {
           let dmg = a.damage;
           if (gp.power.id === 'haki') dmg = Math.ceil(dmg * 0.65);
           p.hp -= dmg; p.iFrames = 0.7;
-          if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; }
+          _hakiReflect(a.damage, null);
+          if (p.hp <= 0) { p.hp = 0; gp.gameOver = true; gp.killSource = 'barrier_purple'; }
         }
       }
       continue;
@@ -3672,46 +4198,98 @@ function _drawBossAttacks(ctx, t) {
     // ── Gojo: Blue orb (left-wall pull distortion) ──────────────────────────────
     if (a.type === 'blue_orb') {
       ctx.save();
-      const lifeAlpha = Math.min(1, a.life / 0.8) * Math.min(1, (a.maxLife - a.life < 0.8 ? 1 : 1));
-      const fadeAlpha = a.life < 0.8 ? a.life / 0.8 : 1;
 
-      // Rightward wind particles
-      if (a.windParticles) {
+      // Spawn progress: 0 → 1 over spawnDuration (ease-out cubic)
+      const spawnRaw  = a.spawnDuration > 0
+        ? Math.min(1, 1 - a.spawnTimer / a.spawnDuration)
+        : 1;
+      const spawnProg = spawnRaw * spawnRaw * (3 - 2 * spawnRaw); // smoothstep
+      const spawning  = spawnProg < 1;
+
+      const fadeAlpha = a.life < 0.8 ? a.life / 0.8 : 1;
+      const drawAlpha = spawning ? spawnProg : fadeAlpha;
+
+      // ── Spawn ripple pulses (two expanding rings that fire at the end of spawn) ──
+      if (spawning && spawnProg > 0.55) {
+        const ripT  = (spawnProg - 0.55) / 0.45; // 0→1 over last 45% of spawn
+        for (let ri = 0; ri < 2; ri++) {
+          const delay = ri * 0.18;
+          const rT    = Math.max(0, ripT - delay) / (1 - delay);
+          if (rT <= 0) continue;
+          const ringR = a.r * 6 * (1 + rT * 2.2);
+          const ringA = (1 - rT) * 0.7;
+          ctx.strokeStyle = `rgba(125,211,252,${ringA})`;
+          ctx.lineWidth   = 2.5 - rT * 1.5;
+          ctx.shadowColor = '#38bdf8'; ctx.shadowBlur = 20;
+          ctx.beginPath(); ctx.arc(a.cx, a.cy, ringR, 0, Math.PI * 2); ctx.stroke();
+        }
+        ctx.shadowBlur = 0;
+      }
+
+      // Rightward wind particles (only once fully spawned)
+      if (!spawning && a.windParticles) {
         for (const wp of a.windParticles) {
           ctx.fillStyle   = `rgba(125,211,252,${wp.alpha * fadeAlpha})`;
           ctx.shadowColor = '#38bdf8'; ctx.shadowBlur = 5;
           ctx.beginPath(); ctx.arc(wp.x, wp.y, 2, 0, Math.PI*2); ctx.fill();
         }
       }
-      // Distortion rings centered on orb
+
+      // Pulse state — warn player 0.6s before a pulse fires, brighten during active
+      const pulseWarn   = !spawning && !a.pulseActive && a.pulseTimer < 0.6;
+      const warnFrac    = pulseWarn ? 1 - (a.pulseTimer / 0.6) : 0;  // 0→1 as pulse approaches
+      const pulseIntens = a.pulseActive
+        ? (a.pulseActiveTimer / a.pulseActiveDur)   // 1→0 fade-out during pulse
+        : warnFrac * 0.45;                          // gentle brightening before pulse
+
+      // Active-pulse expanding ring
+      if (a.pulseActive) {
+        const pT    = 1 - (a.pulseActiveTimer / a.pulseActiveDur); // 0→1 during pulse
+        const ringR = a.r * 6 * (1 + pT * 1.8);
+        const ringA = (1 - pT) * 0.85;
+        ctx.strokeStyle = `rgba(125,211,252,${ringA * drawAlpha})`;
+        ctx.lineWidth   = 3;
+        ctx.shadowColor = '#7dd3fc'; ctx.shadowBlur = 24;
+        ctx.beginPath(); ctx.arc(a.cx, a.cy, ringR, 0, Math.PI * 2); ctx.stroke();
+        ctx.shadowBlur  = 0;
+      }
+
+      // Distortion rings — scale with spawn, wobble normally, brighten on pulse/warn
+      const ringScale   = spawning ? spawnProg : 1;
+      const ringBright  = 0.30 + pulseIntens * 0.55;
       for (let ri = 0; ri < 4; ri++) {
-        const ringR = a.r * (3.0 + ri * 1.5) + Math.sin(t * 0.007 + ri * 2.1) * 8;
-        ctx.strokeStyle = `rgba(56,189,248,${(0.30 - ri * 0.06) * fadeAlpha})`;
-        ctx.lineWidth   = 2.5 - ri * 0.4;
-        ctx.shadowColor = '#38bdf8'; ctx.shadowBlur = 14;
+        const baseR = a.r * (3.0 + ri * 1.5) * ringScale;
+        const ringR = baseR + (spawning ? 0 : Math.sin(t * 0.007 + ri * 2.1) * 8);
+        ctx.strokeStyle = `rgba(56,189,248,${(ringBright - ri * 0.06) * drawAlpha})`;
+        ctx.lineWidth   = (2.5 - ri * 0.4) + pulseIntens * 1.2;
+        ctx.shadowColor = '#38bdf8'; ctx.shadowBlur = 14 + pulseIntens * 18;
         ctx.beginPath(); ctx.arc(a.cx, a.cy, ringR, 0, Math.PI*2); ctx.stroke();
       }
-      // Core orb
+      ctx.shadowBlur = 0;
+
+      // Core orb — scales up from nothing
       const bImg = Assets.getBlueOrbImg();
       if (bImg) {
-        const sz = a.r * 6;
-        ctx.globalAlpha = fadeAlpha;
+        const sz = a.r * 6 * (spawning ? spawnProg : 1);
+        ctx.globalAlpha = drawAlpha;
         ctx.shadowColor = '#38bdf8'; ctx.shadowBlur = 50;
         ctx.drawImage(bImg, a.cx - sz/2, a.cy - sz/2, sz, sz);
         ctx.shadowBlur = 0;
         ctx.globalAlpha = 1;
       } else {
-        const g = ctx.createRadialGradient(a.cx, a.cy, 0, a.cx, a.cy, a.r * 4.5);
-        g.addColorStop(0,   `rgba(255,255,255,${0.95 * fadeAlpha})`);
-        g.addColorStop(0.2, `rgba(186,230,253,${0.92 * fadeAlpha})`);
-        g.addColorStop(0.4, `rgba(125,211,252,${0.80 * fadeAlpha})`);
-        g.addColorStop(0.7, `rgba(14,165,233,${0.50 * fadeAlpha})`);
+        const gr = a.r * 4.5 * (spawning ? spawnProg : 1);
+        const g  = ctx.createRadialGradient(a.cx, a.cy, 0, a.cx, a.cy, gr);
+        g.addColorStop(0,   `rgba(255,255,255,${0.95 * drawAlpha})`);
+        g.addColorStop(0.2, `rgba(186,230,253,${0.92 * drawAlpha})`);
+        g.addColorStop(0.4, `rgba(125,211,252,${0.80 * drawAlpha})`);
+        g.addColorStop(0.7, `rgba(14,165,233,${0.50 * drawAlpha})`);
         g.addColorStop(1,   'rgba(2,132,199,0)');
         ctx.fillStyle   = g;
         ctx.shadowColor = '#38bdf8'; ctx.shadowBlur = 50;
-        ctx.beginPath(); ctx.arc(a.cx, a.cy, a.r * 4.5, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(a.cx, a.cy, gr, 0, Math.PI*2); ctx.fill();
         ctx.shadowBlur = 0;
       }
+
       ctx.restore();
       continue;
     }
@@ -3767,6 +4345,15 @@ function _drawBoss(ctx, t) {
 
 function _drawGojoSprite(ctx, t, b) {
   ctx.save();
+  // IT animation: fade out on departure, fade in on arrival
+  if (b.returnLanding) {
+    const DEPART_END = 0.28, TOTAL = 0.58;
+    if (!b.itDeparted) {
+      ctx.globalAlpha = Math.max(0, 1 - b.returnTimer / DEPART_END);
+    } else {
+      ctx.globalAlpha = Math.min(1, (b.returnTimer - DEPART_END) / (TOTAL - DEPART_END));
+    }
+  }
   const cx = b.x + b.w/2, cy = b.y + b.h/2;
   const dying = b.isDead && b.deathTimer > 0;
 
@@ -3938,78 +4525,13 @@ function _drawGojoSprite(ctx, t, b) {
     ctx.shadowBlur = 0;
   }
 
-  // Stun — cartoon stars circling above Gojo's head
-  if (b.stunTimer > 0) {
-    const headTop = cy - b.h * 0.52;
-    const nStars  = 5;
-    const orbitRx = 32, orbitRy = 10;
-    ctx.save();
-    for (let i = 0; i < nStars; i++) {
-      const ang = b.stunStarAngle + (i / nStars) * Math.PI * 2;
-      const sx  = cx + Math.cos(ang) * orbitRx;
-      const sy  = headTop + Math.sin(ang) * orbitRy;
-      const sz  = 7 + Math.sin(ang + Math.PI/2) * 2; // size oscillates with depth
-      ctx.shadowColor = '#fde047'; ctx.shadowBlur = 12;
-      ctx.fillStyle   = '#fef08a';
-      // 5-pointed star
-      ctx.beginPath();
-      for (let k = 0; k < 10; k++) {
-        const r   = k % 2 === 0 ? sz : sz * 0.42;
-        const a   = (k / 10) * Math.PI * 2 - Math.PI / 2;
-        k === 0 ? ctx.moveTo(sx + Math.cos(a)*r, sy + Math.sin(a)*r)
-                : ctx.lineTo(sx + Math.cos(a)*r, sy + Math.sin(a)*r);
-      }
-      ctx.closePath(); ctx.fill();
-    }
-    ctx.shadowBlur = 0;
-    ctx.restore();
-  }
-
   // ── Infinity Barrier wall ──────────────────────────────────────────────────────
-  if (b.stunTimer <= 0 && !b.isDead) {
+  if (b.stunTimer <= 0 && !b.returnLanding && !b.isDead) {
     _drawGojoBarrier(ctx, t, b);
   }
 
-  // ── Spin landing: draw Gojo spinning toward center with motion-blur ghosts ──
-  if (b.spinLanding) {
-    const vs = 1.8, dw = b.w*vs, dh = b.h*vs;
-    const spriteImg = Assets.getGojoImg();
-    // Ghost trail copies at progressively earlier angles
-    const ghostAlphas = [0.3, 0.2, 0.1];
-    for (let gi = 0; gi < ghostAlphas.length; gi++) {
-      const ghostAngle = b.spinAngle - (gi + 1) * 0.5;
-      ctx.save();
-      ctx.globalAlpha = ghostAlphas[gi];
-      ctx.translate(cx, cy);
-      ctx.rotate(ghostAngle);
-      ctx.shadowColor = '#a78bfa'; ctx.shadowBlur = 20;
-      if (spriteImg) {
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(spriteImg, -dw/2, -dh/2, dw, dh);
-      } else {
-        _drawGojoFallback(ctx, b, 0, 0, false);
-      }
-      ctx.shadowBlur = 0;
-      ctx.restore();
-    }
-    // Main spinning sprite
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(b.spinAngle);
-    ctx.shadowColor = '#a78bfa'; ctx.shadowBlur = flash ? 30 : 20;
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    if (spriteImg) {
-      ctx.drawImage(spriteImg, -dw/2, -dh/2, dw, dh);
-    } else {
-      _drawGojoFallback(ctx, b, 0, 0, flash);
-    }
-    ctx.shadowBlur = 0;
-    ctx.restore();
-    ctx.restore();
-    return;
-  }
+  // Spin landing is drawn by _drawGojoStunOverlay (after player) — skip normal sprite
+  if (b.spinLanding) { ctx.restore(); return; }
 
   // Sprite
   // Attack poses: purple only while charging; red only while catching/throwing (gojoReturnDelay)
@@ -4035,6 +4557,136 @@ function _drawGojoSprite(ctx, t, b) {
   }
 
   ctx.restore();
+}
+
+// Instant Transmission visual: departure rings + arrival rings around Gojo's teleport
+function _drawGojoIT(ctx, b) {
+  if (!b.returnLanding) return;
+  const DEPART_END = 0.28;
+  const TOTAL      = 0.58;
+  const prog = b.returnTimer;
+  ctx.save();
+
+  if (!b.itDeparted) {
+    // Departure: expanding rings from where Gojo was, white/purple flash
+    const dFrac = prog / DEPART_END;
+    const cx = b.itDepartX, cy = b.itDepartY;
+    for (let i = 0; i < 4; i++) {
+      const rp = Math.max(0, Math.min(1, dFrac * 1.6 - i * 0.25));
+      if (rp <= 0) continue;
+      const radius = rp * 130;
+      const alpha  = (1 - rp) * (i === 0 ? 0.9 : 0.5);
+      ctx.strokeStyle = i < 2 ? `rgba(255,255,255,${alpha})` : `rgba(167,139,250,${alpha})`;
+      ctx.lineWidth   = 3 - i * 0.5;
+      ctx.shadowColor = '#a78bfa'; ctx.shadowBlur = 24;
+      ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2); ctx.stroke();
+    }
+    // Central white flash
+    const flashAlpha = Math.max(0, 1 - dFrac * 2.5) * 0.7;
+    if (flashAlpha > 0) {
+      const fg = ctx.createRadialGradient(cx, cy, 0, cx, cy, 60);
+      fg.addColorStop(0, `rgba(255,255,255,${flashAlpha})`);
+      fg.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = fg;
+      ctx.beginPath(); ctx.arc(cx, cy, 60, 0, Math.PI * 2); ctx.fill();
+    }
+  } else {
+    // Arrival: rings burst outward at anchor position
+    const aFrac = (prog - DEPART_END) / (TOTAL - DEPART_END);
+    const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    for (let i = 0; i < 4; i++) {
+      const rp = Math.max(0, Math.min(1, aFrac * 1.6 - i * 0.2));
+      if (rp <= 0) continue;
+      const radius = rp * 110;
+      const alpha  = (1 - rp) * (i === 0 ? 0.85 : 0.45);
+      ctx.strokeStyle = i < 2 ? `rgba(255,255,255,${alpha})` : `rgba(167,139,250,${alpha})`;
+      ctx.lineWidth   = 3 - i * 0.5;
+      ctx.shadowColor = '#a78bfa'; ctx.shadowBlur = 20;
+      ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2); ctx.stroke();
+    }
+    // Arrival flash — bright centre that quickly fades
+    const flashAlpha = Math.max(0, 1 - aFrac * 3) * 0.8;
+    if (flashAlpha > 0) {
+      const fg = ctx.createRadialGradient(cx, cy, 0, cx, cy, 50);
+      fg.addColorStop(0, `rgba(255,255,255,${flashAlpha})`);
+      fg.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = fg;
+      ctx.beginPath(); ctx.arc(cx, cy, 50, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+// Drawn AFTER _drawPlayer so stun effects appear on top of the character sprite
+function _drawGojoStunOverlay(ctx, t, b) {
+  if (!b || b.type !== 'gojo') return;
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  const flash = b.flashTimer > 0;
+
+  // Stars orbiting above Gojo's head during stun
+  if (b.stunTimer > 0 && !b.spinLanding) {
+    const headTop = cy - b.h * 0.52;
+    const nStars  = 5;
+    const orbitRx = 32, orbitRy = 10;
+    ctx.save();
+    for (let i = 0; i < nStars; i++) {
+      const ang = b.stunStarAngle + (i / nStars) * Math.PI * 2;
+      const sx  = cx + Math.cos(ang) * orbitRx;
+      const sy  = headTop + Math.sin(ang) * orbitRy;
+      const sz  = 7 + Math.sin(ang + Math.PI / 2) * 2;
+      ctx.shadowColor = '#fde047'; ctx.shadowBlur = 12;
+      ctx.fillStyle   = '#fef08a';
+      ctx.beginPath();
+      for (let k = 0; k < 10; k++) {
+        const r = k % 2 === 0 ? sz : sz * 0.42;
+        const a = (k / 10) * Math.PI * 2 - Math.PI / 2;
+        k === 0 ? ctx.moveTo(sx + Math.cos(a)*r, sy + Math.sin(a)*r)
+                : ctx.lineTo(sx + Math.cos(a)*r, sy + Math.sin(a)*r);
+      }
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+
+  // Spin landing: ghost trail + spinning Gojo sprite
+  if (b.spinLanding) {
+    const vs = 1.8, dw = b.w * vs, dh = b.h * vs;
+    const spriteImg = Assets.getGojoImg();
+    const ghostAlphas = [0.3, 0.2, 0.1];
+    for (let gi = 0; gi < ghostAlphas.length; gi++) {
+      const ghostAngle = b.spinAngle - (gi + 1) * 0.5;
+      ctx.save();
+      ctx.globalAlpha = ghostAlphas[gi];
+      ctx.translate(cx, cy);
+      ctx.rotate(ghostAngle);
+      ctx.shadowColor = '#a78bfa'; ctx.shadowBlur = 20;
+      if (spriteImg) {
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(spriteImg, -dw/2, -dh/2, dw, dh);
+      } else {
+        _drawGojoFallback(ctx, b, 0, 0, false);
+      }
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(b.spinAngle);
+    ctx.shadowColor = '#a78bfa'; ctx.shadowBlur = flash ? 30 : 20;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    if (spriteImg) {
+      ctx.drawImage(spriteImg, -dw/2, -dh/2, dw, dh);
+    } else {
+      _drawGojoFallback(ctx, b, 0, 0, flash);
+    }
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
 }
 
 function _drawGojoFallback(ctx, b, cx, cy, flash) {
@@ -4983,17 +5635,6 @@ function _drawBossHUD(ctx, t) {
       ctx.shadowBlur = 0;
     });
     ctx.globalAlpha = 1;
-    // "INFINITY" label shows bounce requirement for current gate
-    if (b.gateIndex < b.rallyBounces.length && !b.isDead) {
-      const req   = b.rallyBounces[b.gateIndex];
-      const label = `∞ — Rally: ${req} bounce${req > 1 ? 's' : ''}`;
-      ctx.font      = 'bold 10px "Courier New", monospace';
-      ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(192,132,252,0.80)';
-      ctx.shadowColor = '#a78bfa'; ctx.shadowBlur = 8;
-      ctx.fillText(label, W / 2, barY + barH + 18);
-      ctx.shadowBlur = 0;
-    }
   } else {
     ctx.strokeStyle = b.glowColor || '#f97316';
     ctx.lineWidth   = 1.5;
@@ -5046,21 +5687,22 @@ function _drawBossIntro(ctx, t, b) {
 function _drawCombatHint(ctx) {
   if (!gp || !gp.hints || gp.hints.timer <= 0 || !gp.hints.text) return;
   const h     = gp.hints;
-  const prog  = h.timer / h.maxTimer;            // 1→0 as it expires
   // fade in first 0.25s, fade out last 0.6s
   const fadeIn  = Math.min(1, (h.maxTimer - h.timer) / 0.25);
   const fadeOut = Math.min(1, h.timer / 0.6);
   const alpha   = Math.min(fadeIn, fadeOut);
   if (alpha <= 0) return;
 
+  const charColor = gp.char.color.main;
+  const charGlow  = gp.char.color.glow + '0.6)';
+
   const lines  = h.text.split('\n');
   const px     = gp.player.x + PW / 2;
   const py     = gp.player.y - 12;
   const lineH  = 20;
   const pad    = 12;
-  const fontSize = 14;
   ctx.save();
-  ctx.font = `italic ${fontSize}px "Segoe UI", Georgia, serif`;
+  ctx.font = `italic 14px "Segoe UI", Georgia, serif`;
   const maxW = Math.max(...lines.map(l => ctx.measureText(l).width));
   const bw   = maxW + pad * 2;
   const bh   = lines.length * lineH + pad * 1.4;
@@ -5070,14 +5712,14 @@ function _drawCombatHint(ctx) {
   // Background bubble
   ctx.globalAlpha = alpha * 0.82;
   ctx.fillStyle   = 'rgba(10,8,20,0.92)';
-  ctx.shadowColor = 'rgba(167,139,250,0.6)';
+  ctx.shadowColor = charGlow;
   ctx.shadowBlur  = 14;
   roundRect(ctx, bx, by, bw, bh, 8);
   ctx.fill();
 
   // Border
   ctx.globalAlpha = alpha * 0.9;
-  ctx.strokeStyle = 'rgba(196,181,253,0.55)';
+  ctx.strokeStyle = charColor;
   ctx.lineWidth   = 1.2;
   ctx.shadowBlur  = 0;
   roundRect(ctx, bx, by, bw, bh, 8);
@@ -5085,10 +5727,10 @@ function _drawCombatHint(ctx) {
 
   // Text
   ctx.globalAlpha  = alpha;
-  ctx.fillStyle    = 'rgba(230,220,255,0.95)';
+  ctx.fillStyle    = 'rgba(240,240,255,0.95)';
   ctx.textAlign    = 'center';
   ctx.textBaseline = 'top';
-  ctx.shadowColor  = 'rgba(167,139,250,0.8)';
+  ctx.shadowColor  = charColor;
   ctx.shadowBlur   = 6;
   lines.forEach((line, i) => {
     ctx.fillText(line, bx + bw / 2, by + pad * 0.7 + i * lineH);
@@ -5199,6 +5841,44 @@ function _drawInfiniteVoid(ctx, t, b) {
   }
   ctx.globalAlpha = 1;
 
+  // ── Gojo and his attacks glow through the void ──
+  // 'lighter' composite adds light to dark pixels, making entities visible
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = alpha * 0.85;
+
+  // Gojo — purple light halo
+  const gcx = b.x + b.w / 2, gcy = b.y + b.h / 2;
+  const gojoHalo = ctx.createRadialGradient(gcx, gcy, 0, gcx, gcy, 130);
+  gojoHalo.addColorStop(0,   'rgba(192,132,252,0.55)');
+  gojoHalo.addColorStop(0.4, 'rgba(139,92,246,0.25)');
+  gojoHalo.addColorStop(1,   'rgba(88,28,135,0)');
+  ctx.fillStyle = gojoHalo;
+  ctx.beginPath(); ctx.arc(gcx, gcy, 130, 0, Math.PI * 2); ctx.fill();
+
+  // Active boss attacks
+  for (const a of gp.bossAttacks) {
+    if (a.done) continue;
+    let rgb, glowR;
+    if      (a.type === 'blue_orb')       { rgb = '56,189,248';   glowR = a.r * 6; }
+    else if (a.type === 'purple_ball')    { rgb = '167,139,250';  glowR = a.r * 3.5; }
+    else if (a.type === 'red_ball')       { rgb = '239,68,68';    glowR = a.r * 3.5; }
+    else if (a.type === 'barrier_purple') { rgb = '192,132,252';  glowR = 60; }
+    else continue;
+    const acx = a.cx ?? (a.x + (a.w ?? 0) / 2);
+    const acy = a.cy ?? (a.y + (a.h ?? 0) / 2);
+    const ag = ctx.createRadialGradient(acx, acy, 0, acx, acy, glowR);
+    ag.addColorStop(0,   `rgba(${rgb},0.75)`);
+    ag.addColorStop(0.45,`rgba(${rgb},0.3)`);
+    ag.addColorStop(1,   `rgba(${rgb},0)`);
+    ctx.fillStyle = ag;
+    ctx.beginPath(); ctx.arc(acx, acy, glowR, 0, Math.PI * 2); ctx.fill();
+  }
+
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
   // ── Shadow hands reaching inward from room edges ──
   ctx.save();
   for (const hand of b.voidHands) {
@@ -5288,7 +5968,7 @@ const _CIN_DUR = {
   zoom_in:       1.0,
   gojo_text:     2.4,
   player_text1:  2.2,
-  player_attack: 0.65,
+  player_attack: 1.2,
   white_flash:   0.7,
   reveal:        2.4,
   player_text2:  2.8,
@@ -5309,15 +5989,21 @@ function _startGojoCinematic() {
   gp.bossAttacks   = [];
   gp.projectiles   = [];
   gp.activeAttacks = [];
-  // Place player on the left, Gojo on the right, both at the same vertical level
-  const midY = ROOM.y + ROOM.h / 2;
+  const midY       = ROOM.y + ROOM.h / 2;
+  const gojoStartX = GOJO_ANCHOR_X + BW / 2;          // right-side anchor
+  const gojoCenterX = ROOM.x + ROOM.w * 0.50;         // center — Gojo walks here (Levi)
+  // Levi ends up just past Gojo after dashing through
+  const leviPostX  = gojoCenterX + BW / 2 + 90;
   gp.cinematic = {
-    phase:   'zoom_in',
-    timer:   0,
-    playerX: ROOM.x + Math.floor(ROOM.w * 0.18) + PW / 2,
-    playerY: midY,
-    gojoX:   GOJO_ANCHOR_X + BW / 2,
-    gojoY:   midY,
+    phase:       'zoom_in',
+    timer:       0,
+    playerX:     ROOM.x + Math.floor(ROOM.w * 0.18) + PW / 2,
+    playerY:     midY,
+    gojoX:       gojoStartX,   // authoritative for death pose; updated after white_flash
+    gojoY:       midY,
+    gojoStartX,
+    gojoCenterX,
+    leviPostX,
   };
 }
 
@@ -5331,9 +6017,20 @@ function _updateGojoCinematic(dt) {
       gp.floorComplete = true;   // main.js detects this → STATE.WIN
       return;
     }
+    // Levi: after flash, move player to post-dash position; Gojo is already at center
+    if (c.phase === 'white_flash' && gp.char.id === 'levi') {
+      c.playerX = c.leviPostX;
+      c.gojoX   = c.gojoCenterX;   // death pose renders here (already where he was walking)
+    }
     c.phase = next;
     c.timer = 0;
   }
+}
+
+// Attack ease: fast in first 40% of time (covers 70% of distance), slow in remaining 60%
+function _cinAttackEase(prog) {
+  if (prog < 0.4) return (prog / 0.4) * 0.70;
+  return 0.70 + ((prog - 0.4) / 0.6) * 0.30;
 }
 
 function _drawGojoCinematic(ctx, t) {
@@ -5341,25 +6038,50 @@ function _drawGojoCinematic(ctx, t) {
   const { phase, timer, playerX, playerY, gojoX, gojoY } = c;
   const dur  = _CIN_DUR[phase];
   const prog = Math.min(1, timer / dur);
+  const charId = gp.char.id;
+
+  // ── Levi: Gojo walks from anchor to center across gojo_text + player_text1 ──
+  let effectiveGojoX = gojoX;
+  if (charId === 'levi') {
+    const totalWalkDur = _CIN_DUR.gojo_text + _CIN_DUR.player_text1;
+    let elapsed = 0;
+    if      (phase === 'gojo_text')    elapsed = timer;
+    else if (phase === 'player_text1') elapsed = _CIN_DUR.gojo_text + timer;
+    else if (phase !== 'zoom_in')      elapsed = totalWalkDur; // player_attack and beyond
+    const wp = Math.min(1, elapsed / totalWalkDur);
+    const we = 1 - Math.pow(1 - wp, 3); // ease-out cubic: starts walking fast, slows to stop
+    effectiveGojoX = c.gojoStartX + we * (c.gojoCenterX - c.gojoStartX);
+  }
 
   // Zoom: 1.0→1.15 during zoom_in, held at 1.15 for all middle phases
   const targetZoom = 1.15;
   let zoom = 1.0;
-  if (phase === 'zoom_in')      zoom = 1.0 + prog * (targetZoom - 1.0);
+  if (phase === 'zoom_in')       zoom = 1.0 + prog * (targetZoom - 1.0);
   else if (phase !== 'fade_out') zoom = targetZoom;
 
-  // Focus point: midpoint between player and Gojo, clamped so room edges stay on screen
-  const rawFX = (playerX + gojoX) / 2;
+  // Focus point: midpoint between player and effective Gojo position
+  const rawFX = (playerX + effectiveGojoX) / 2;
   const rawFY = (playerY + gojoY) / 2;
-  const focusX = Math.min(Math.max(rawFX, W / 2), W / 2 + 60);
+  const focusX = Math.min(Math.max(rawFX, W / 2 - 60), W / 2 + 60);
   const focusY = Math.min(Math.max(rawFY, H / 2 - 20), H / 2 + 20);
 
   // Helper: world → screen under this zoom
   const toSX = wx => focusX + (wx - focusX) * zoom;
   const toSY = wy => focusY + (wy - focusY) * zoom;
 
-  // Death pose shown from white_flash onward so the reveal uncovers it seamlessly
-  const showDeath = (phase === 'white_flash' || phase === 'reveal' || phase === 'player_text2' || phase === 'fade_out');
+  // Death pose shown from reveal onward — white flash hides the sprite swap
+  const showDeath = (phase === 'reveal' || phase === 'player_text2' || phase === 'fade_out');
+
+  // Attack ease value — frozen at 1.0 during white_flash so attack stays visible under the flash
+  const attackEase = (phase === 'white_flash') ? 1.0 : _cinAttackEase(prog);
+  const showAttack = (phase === 'player_attack' || phase === 'white_flash');
+
+  // Levi dash target uses effectiveGojoX (center after walk)
+  const leviDashEndX = effectiveGojoX + BW / 2 + 60;
+  const leviDashX = (showAttack && charId === 'levi')
+    ? playerX + attackEase * (leviDashEndX - playerX)
+    : playerX;
+  const leviMoving = showAttack && charId === 'levi';
 
   // ── Draw scene under zoom transform ──────────────────────────────────────
   ctx.save();
@@ -5369,16 +6091,16 @@ function _drawGojoCinematic(ctx, t) {
 
   _drawRoom(ctx);
 
-  // Gojo: standing (faces left toward player) or slumped death pose
+  // ── Gojo sprite ───────────────────────────────────────────────────────────
   {
     const vs = 1.8, dw = BW * vs, dh = BH * vs;
     if (showDeath) {
-      // Slumped — rotated toward the left (negative rotation so he falls leftward)
+      // Slumped at gojoX (updated by _updateGojoCinematic to gojoCenterX for Levi)
       const img = Assets.getGojoDeathImg() || Assets.getGojoImg();
       ctx.save();
       ctx.translate(gojoX, gojoY + dh * 0.08);
-      ctx.scale(-1, 1);   // face left
-      ctx.rotate(-Math.PI * 0.15);  // tilt leftward (slumping toward the player)
+      ctx.scale(-1, 1);
+      ctx.rotate(-Math.PI * 0.15);
       ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
       if (img) {
         ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
@@ -5391,10 +6113,10 @@ function _drawGojoCinematic(ctx, t) {
       }
       ctx.restore();
     } else {
-      // Standing — flipped to face left toward the player
+      // Standing — drawn at effectiveGojoX (walks left for Levi)
       const img = Assets.getGojoImg();
       ctx.save();
-      ctx.translate(gojoX, gojoY - dh / 2);
+      ctx.translate(effectiveGojoX, gojoY - dh / 2);
       ctx.scale(-1, 1);
       ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
       if (img) {
@@ -5406,11 +6128,81 @@ function _drawGojoCinematic(ctx, t) {
     }
   }
 
-  // Player: attack pose during player_attack, idle otherwise; always faces right (toward Gojo)
+  // ── Finishing attack (player_attack + frozen during white_flash) ──────────
+  if (showAttack) {
+    if (charId === 'dio') {
+      const kx = playerX + PW / 2 + attackEase * (effectiveGojoX - BW / 2 - (playerX + PW / 2));
+      const ky = playerY;
+      ctx.save();
+      ctx.translate(kx, ky);
+      ctx.shadowColor = '#c084fc'; ctx.shadowBlur = 16;
+      ctx.fillStyle   = '#e2e8f0';
+      ctx.beginPath();
+      ctx.moveTo(24, 0); ctx.lineTo(5, -5.5); ctx.lineTo(3, -4);
+      ctx.lineTo(3, 4); ctx.lineTo(5, 5.5); ctx.closePath(); ctx.fill();
+      ctx.shadowBlur  = 0;
+      ctx.strokeStyle = '#f8fafc'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(24, 0); ctx.lineTo(5, -5.5); ctx.stroke();
+      ctx.fillStyle = '#94a3b8'; ctx.fillRect(1, -7, 4, 14);
+      ctx.fillStyle = '#78350f'; ctx.fillRect(-8, -4, 10, 8);
+      ctx.restore();
+
+    } else if (charId === 'kaido') {
+      const ox = playerX + PW / 2;
+      const oy = playerY;
+      const maxLen = effectiveGojoX - BW / 2 - ox;
+      const beamLen = attackEase * maxLen;
+      if (beamLen > 0) {
+        const nearH = 9, farH = 45;
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(ox, oy - nearH); ctx.lineTo(ox + beamLen, oy - farH);
+        ctx.lineTo(ox + beamLen, oy + farH); ctx.lineTo(ox, oy + nearH);
+        ctx.closePath(); ctx.clip();
+        const flk = 0.75 + Math.sin(t * 0.018) * 0.12;
+        const g1 = ctx.createLinearGradient(ox, oy, ox + beamLen, oy);
+        g1.addColorStop(0,   `rgba(255,120,0,${flk})`);
+        g1.addColorStop(0.5, `rgba(220,55,0,${flk * 0.82})`);
+        g1.addColorStop(1,   'rgba(150,8,0,0)');
+        ctx.fillStyle = g1; ctx.shadowColor = '#ff4400'; ctx.shadowBlur = 8;
+        ctx.fillRect(ox, oy - farH, beamLen, farH * 2);
+        const g2 = ctx.createLinearGradient(ox, oy, ox + beamLen, oy);
+        g2.addColorStop(0,   `rgba(255,230,180,${flk * 0.8})`);
+        g2.addColorStop(0.6, `rgba(255,160,60,${flk * 0.4})`);
+        g2.addColorStop(1,   'rgba(200,80,0,0)');
+        ctx.fillStyle = g2; ctx.shadowBlur = 0;
+        ctx.fillRect(ox, oy - nearH * 0.5, beamLen, nearH);
+        ctx.restore();
+      }
+
+    } else if (charId === 'levi') {
+      // Speed lines trail behind Levi during the dash; frozen in place during white_flash
+      const trailEase = phase === 'white_flash' ? 1.0 : attackEase;
+      ctx.save();
+      ctx.strokeStyle = `rgba(74,222,128,0.45)`;
+      ctx.lineWidth   = 1.5;
+      ctx.shadowColor = '#4ade80'; ctx.shadowBlur = 6;
+      for (let i = 0; i < 8; i++) {
+        const yo = playerY + (i - 3.5) * 11;
+        const trailLen = 60 + i * 8;
+        ctx.globalAlpha = 0.25 + (1 - trailEase) * 0.4;
+        ctx.beginPath();
+        ctx.moveTo(leviDashX - trailLen, yo);
+        ctx.lineTo(leviDashX - 8, yo);
+        ctx.stroke();
+      }
+      ctx.shadowBlur  = 0;
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+  }
+
+  // ── Player sprite ─────────────────────────────────────────────────────────
   {
-    const pose = (phase === 'player_attack') ? 'attack' : 'idle';
     const VS = 1.7, vw = PW * VS, vh = PH * VS;
-    Assets.drawSprite(ctx, gp.char, pose, 'right', playerX - vw / 2, playerY - vh / 2, vw, vh, 0);
+    const pose = showAttack ? 'attack' : 'idle';
+    const drawX = leviMoving ? leviDashX : playerX;
+    Assets.drawSprite(ctx, gp.char, pose, 'right', drawX - vw / 2, playerY - vh / 2, vw, vh, 0);
   }
 
   ctx.restore();
@@ -5422,17 +6214,15 @@ function _drawGojoCinematic(ctx, t) {
   ctx.fillRect(0, 0, W, lbH);
   ctx.fillRect(0, H - lbH, W, lbH);
 
-  // ── White flash: ramp to full white over the phase, peak at end ──────────
+  // ── White flash: ramp to full white, covering the sprite swap underneath ──
   if (phase === 'white_flash') {
-    // Ease-in so the flash builds up then slams to full white at the cut point
     const flashAlpha = prog * prog;
     ctx.fillStyle = `rgba(255,255,255,${flashAlpha})`;
     ctx.fillRect(0, 0, W, H);
   }
 
-  // ── Reveal: white held at 1.0 then slowly melts away across the whole phase ──
+  // ── Reveal: white melts away to uncover Gojo's death pose ────────────────
   if (phase === 'reveal') {
-    // Ease-out: slow at start, faster near end, no abrupt cut
     const revealFade = Math.max(0, 1 - prog * prog * prog);
     ctx.fillStyle = `rgba(255,255,255,${revealFade})`;
     ctx.fillRect(0, 0, W, H);
@@ -5442,13 +6232,13 @@ function _drawGojoCinematic(ctx, t) {
   const charColor = gp.char.color.main;
   const gojoColor = '#c4b5fd';
 
-  // Gojo line
+  // Gojo line — tracks effectiveGojoX so bubble follows him as he walks
   if (phase === 'gojo_text') {
     const a = prog < 0.12 ? prog / 0.12 : prog > 0.82 ? (1 - prog) / 0.18 : 1;
-    _drawCinDialogue(ctx, toSX(gojoX), toSY(gojoY - BH * 0.9), "This isn't over...", gojoColor, a);
+    _drawCinDialogue(ctx, toSX(effectiveGojoX), toSY(gojoY - BH * 0.9), "This isn't over...", gojoColor, a);
   }
 
-  // Player line 1 — holds visible into player_attack then fades out
+  // Player line 1 — fades out at start of player_attack
   if (phase === 'player_text1') {
     const a = prog < 0.12 ? prog / 0.12 : prog > 0.82 ? (1 - prog) / 0.18 : 1;
     _drawCinDialogue(ctx, toSX(playerX), toSY(playerY - PH * 0.85), 'It already is.', charColor, a);
@@ -5458,10 +6248,15 @@ function _drawGojoCinematic(ctx, t) {
     if (a > 0) _drawCinDialogue(ctx, toSX(playerX), toSY(playerY - PH * 0.85), 'It already is.', charColor, a);
   }
 
-  // Player line 2
+  // Player line 2 — character-specific comedic finisher
   if (phase === 'player_text2') {
     const a = prog < 0.12 ? prog / 0.12 : prog > 0.82 ? (1 - prog) / 0.18 : 1;
-    _drawCinDialogue(ctx, toSX(playerX), toSY(playerY - PH * 0.85), 'That was a good fight.', charColor, a);
+    const finalLine = {
+      dio:   "That was it? How pathetic.",
+      kaido: "Yet another soul fell to my strength.",
+      levi:  "What a waste of a final project...",
+    }[charId] || "That was a good fight.";
+    _drawCinDialogue(ctx, toSX(playerX), toSY(playerY - PH * 0.85), finalLine, charColor, a);
   }
 
   // ── Fade to black ─────────────────────────────────────────────────────────
@@ -5512,7 +6307,132 @@ const _DEV_BOSSES = [
   { id: 'gojo',  label: 'GOJO',  sub: 'Floor 3',    ready: true,  color: '#a78bfa' },
 ];
 
+const _DEATH_FOLDERS = [
+  { label: 'Kira Deaths',   color: '#7c3aed', sources: [
+    { id: 'bomb',         label: "Kira's Bomb"      },
+    { id: 'sha',          label: 'Sheer Heart Attack'},
+    { id: 'kira_contact', label: 'Contact'           },
+  ]},
+  { label: 'Enel Deaths',   color: '#7dd3fc', sources: [
+    { id: 'beam',         label: 'Lightning Beam'   },
+    { id: 'grid',         label: 'Lightning Grid'   },
+    { id: 'enel_contact', label: 'Contact'           },
+  ]},
+  { label: 'Gojo Deaths',   color: '#a78bfa', sources: [
+    { id: 'hollow_purple',  label: 'Hollow Purple'    },
+    { id: 'blue_orb',       label: 'Blue Orb'         },
+    { id: 'red_ball',       label: 'Red Volleyball'   },
+    { id: 'void',           label: 'Infinite Void'    },
+    { id: 'barrier_purple', label: 'Barrier Purple'   },
+    { id: 'gojo_contact',   label: 'Contact'           },
+  ]},
+  { label: 'Common Deaths', color: '#94a3b8', sources: [
+    { id: 'enemy',        label: 'Basic Enemy'  },
+    { id: 'ranged_enemy', label: 'Ranged Enemy' },
+    { id: 'tank_enemy',   label: 'Tank/Brute'   },
+  ]},
+];
+
+function _drawDevDeathBrowser(ctx, t) {
+  ctx.fillStyle = 'rgba(0,0,0,0.88)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.font      = 'bold 22px "Segoe UI Black", "Arial Black", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(255,215,0,0.9)';
+  ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 14;
+  ctx.fillText('DEATH SCREEN BROWSER', W / 2, 68);
+  ctx.shadowBlur = 0;
+
+  ctx.font      = '13px "Segoe UI", sans-serif';
+  ctx.fillStyle = 'rgba(148,163,184,0.7)';
+  ctx.fillText('Click a death to preview it.  ESC to go back.', W / 2, 92);
+
+  const colW = 248, colGap = 20;
+  const totalW = _DEATH_FOLDERS.length * colW + (_DEATH_FOLDERS.length - 1) * colGap;
+  const startX = W / 2 - totalW / 2;
+  const startY = 118;
+  const btnH = 36, btnGap = 6, headerH = 38;
+
+  _DEATH_FOLDERS.forEach((folder, fi) => {
+    const fx = startX + fi * (colW + colGap);
+
+    // Column header
+    ctx.save();
+    ctx.fillStyle = folder.color + '22';
+    roundRect(ctx, fx, startY, colW, headerH, 8); ctx.fill();
+    ctx.strokeStyle = folder.color + '88'; ctx.lineWidth = 1.5;
+    roundRect(ctx, fx, startY, colW, headerH, 8); ctx.stroke();
+    ctx.font      = 'bold 13px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = folder.color;
+    ctx.shadowColor = folder.color; ctx.shadowBlur = 8;
+    ctx.fillText(folder.label, fx + colW / 2, startY + headerH / 2 + 5);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+
+    folder.sources.forEach((src, si) => {
+      const by = startY + headerH + 8 + si * (btnH + btnGap);
+      const hover = Input.mouseX >= fx && Input.mouseX < fx + colW &&
+                    Input.mouseY >= by && Input.mouseY < by + btnH;
+
+      ctx.save();
+      ctx.fillStyle = hover ? folder.color + '28' : 'rgba(12,10,28,0.9)';
+      ctx.shadowColor = hover ? folder.color : 'transparent';
+      ctx.shadowBlur  = hover ? 12 : 0;
+      roundRect(ctx, fx, by, colW, btnH, 7); ctx.fill();
+      ctx.strokeStyle = hover ? folder.color : 'rgba(80,80,120,0.4)';
+      ctx.lineWidth   = hover ? 1.8 : 1;
+      ctx.shadowBlur  = 0;
+      roundRect(ctx, fx, by, colW, btnH, 7); ctx.stroke();
+      ctx.font      = `${hover ? 'bold ' : ''}14px "Segoe UI", sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = hover ? '#fff' : 'rgba(200,200,220,0.82)';
+      ctx.fillText(src.label, fx + colW / 2, by + btnH / 2 + 5);
+      ctx.restore();
+    });
+  });
+}
+
+function _updateDevDeathBrowser(t) {
+  if (Input.justPressed('Escape')) { gp.devDeathScreen = false; return; }
+  if (!Input.clicked) return;
+
+  const colW = 248, colGap = 20;
+  const totalW = _DEATH_FOLDERS.length * colW + (_DEATH_FOLDERS.length - 1) * colGap;
+  const startX = W / 2 - totalW / 2;
+  const startY = 118;
+  const btnH = 36, btnGap = 6, headerH = 38;
+
+  _DEATH_FOLDERS.forEach((folder, fi) => {
+    const fx = startX + fi * (colW + colGap);
+    folder.sources.forEach((src, si) => {
+      const by = startY + headerH + 8 + si * (btnH + btnGap);
+      if (Input.mouseX >= fx && Input.mouseX < fx + colW &&
+          Input.mouseY >= by && Input.mouseY < by + btnH) {
+        gp.devDeathPreview = { source: src.id, startT: t - 1000 };
+      }
+    });
+  });
+}
+
 function _drawDevBossSelect(ctx, t) {
+  // Death screen preview — overlays everything
+  if (gp.devDeathPreview) {
+    drawGameOverScreen(ctx, t, gp.char, gp.devDeathPreview.source, gp.devDeathPreview.startT);
+    ctx.font      = '13px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(148,163,184,0.55)';
+    ctx.fillText('ESC — back to browser', W / 2, H - 16);
+    return;
+  }
+
+  // Death browser sub-menu
+  if (gp.devDeathScreen) {
+    _drawDevDeathBrowser(ctx, t);
+    return;
+  }
+
   ctx.fillStyle = 'rgba(0,0,0,0.85)';
   ctx.fillRect(0, 0, W, H);
 
@@ -5571,17 +6491,98 @@ function _drawDevBossSelect(ctx, t) {
     ctx.restore();
   });
 
+  // "Ending Animation" button below the Gojo card (index 2)
+  {
+    const gojoCardX = sx + 2 * (cardW + gap);
+    const btnW = cardW, btnH = 36, btnY = cy + cardH + 10;
+    const hover = Input.mouseX >= gojoCardX && Input.mouseX < gojoCardX + btnW &&
+                  Input.mouseY >= btnY       && Input.mouseY < btnY + btnH;
+    ctx.save();
+    ctx.globalAlpha = hover ? 1 : 0.78;
+    ctx.fillStyle   = hover ? 'rgba(30,10,60,0.98)' : 'rgba(12,8,28,0.90)';
+    ctx.shadowColor = '#a78bfa'; ctx.shadowBlur = hover ? 16 : 4;
+    roundRect(ctx, gojoCardX, btnY, btnW, btnH, 7); ctx.fill();
+    ctx.strokeStyle = '#a78bfa'; ctx.lineWidth = hover ? 2 : 1.2;
+    roundRect(ctx, gojoCardX, btnY, btnW, btnH, 7); ctx.stroke();
+    ctx.shadowBlur  = 0;
+    ctx.font        = 'bold 13px "Segoe UI", sans-serif';
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = '#c4b5fd';
+    ctx.fillText('▶  Ending Animation', gojoCardX + btnW / 2, btnY + btnH / 2 + 1);
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  // "Death Screens" + "Credits" buttons — paired row centered below all boss cards
+  {
+    const btnW = 210, btnRowH = 36, btnGap = 16;
+    const rowY  = cy + cardH + 56;
+    const rowX  = W / 2 - btnW - btnGap / 2;
+
+    // Death Screens
+    const dsBtnX = rowX;
+    const dsHover = Input.mouseX >= dsBtnX && Input.mouseX < dsBtnX + btnW &&
+                    Input.mouseY >= rowY    && Input.mouseY < rowY + btnRowH;
+    ctx.save();
+    ctx.globalAlpha = dsHover ? 1 : 0.78;
+    ctx.fillStyle   = dsHover ? 'rgba(10,4,28,0.98)' : 'rgba(8,4,18,0.90)';
+    ctx.shadowColor = '#ef4444'; ctx.shadowBlur = dsHover ? 16 : 4;
+    roundRect(ctx, dsBtnX, rowY, btnW, btnRowH, 7); ctx.fill();
+    ctx.strokeStyle = '#ef4444'; ctx.lineWidth = dsHover ? 2 : 1.2;
+    roundRect(ctx, dsBtnX, rowY, btnW, btnRowH, 7); ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.font        = 'bold 13px "Segoe UI", sans-serif';
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = '#fca5a5';
+    ctx.fillText('☠  Death Screens', dsBtnX + btnW / 2, rowY + btnRowH / 2 + 5);
+    ctx.globalAlpha = 1;
+    ctx.restore();
+
+    // Credits
+    const crBtnX = rowX + btnW + btnGap;
+    const crHover = Input.mouseX >= crBtnX && Input.mouseX < crBtnX + btnW &&
+                    Input.mouseY >= rowY    && Input.mouseY < rowY + btnRowH;
+    ctx.save();
+    ctx.globalAlpha = crHover ? 1 : 0.78;
+    ctx.fillStyle   = crHover ? 'rgba(6,2,22,0.98)' : 'rgba(8,4,18,0.90)';
+    ctx.shadowColor = '#a78bfa'; ctx.shadowBlur = crHover ? 16 : 4;
+    roundRect(ctx, crBtnX, rowY, btnW, btnRowH, 7); ctx.fill();
+    ctx.strokeStyle = '#a78bfa'; ctx.lineWidth = crHover ? 2 : 1.2;
+    roundRect(ctx, crBtnX, rowY, btnW, btnRowH, 7); ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.font        = 'bold 13px "Segoe UI", sans-serif';
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = '#c4b5fd';
+    ctx.fillText('✦  Credits', crBtnX + btnW / 2, rowY + btnRowH / 2 + 5);
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
   ctx.font      = '12px "Segoe UI", sans-serif';
   ctx.textAlign = 'center';
   ctx.fillStyle = 'rgba(80,80,110,0.65)';
   ctx.fillText('Walk left through the purple door in the first room to return here', W / 2, H - 54);
 }
 
-function _updateDevBossSelect() {
+function _updateDevBossSelect(t) {
+  // Death preview: ESC dismisses
+  if (gp.devDeathPreview) {
+    if (Input.justPressed('Escape')) gp.devDeathPreview = null;
+    return;
+  }
+
+  // Death browser sub-menu
+  if (gp.devDeathScreen) {
+    _updateDevDeathBrowser(t);
+    return;
+  }
+
   if (Input.justPressed('Escape')) {
-    gp.devBossSelect = false;
-    gp.player.x      = ROOM.x + 24;
-    gp.player.y      = ROOM.y + ROOM.h / 2 - PH / 2;
+    gp.devBossSelect    = false;
+    gp.devDeathScreen   = false;
+    gp.devDeathPreview  = null;
+    gp.player.x         = ROOM.x + 24;
+    gp.player.y         = ROOM.y + ROOM.h / 2 - PH / 2;
     return;
   }
   if (!Input.clicked) return;
@@ -5590,6 +6591,36 @@ function _updateDevBossSelect() {
   const total = _DEV_BOSSES.length * cardW + (_DEV_BOSSES.length - 1) * gap;
   const sx    = W / 2 - total / 2;
   const cy    = H / 2 - cardH / 2 - 4;
+
+  // "Death Screens" button
+  const btnW = 210, btnRowH = 36, btnGap = 16;
+  const rowY  = cy + cardH + 56;
+  const rowX  = W / 2 - btnW - btnGap / 2;
+
+  const dsBtnX = rowX;
+  if (Input.mouseX >= dsBtnX && Input.mouseX < dsBtnX + btnW &&
+      Input.mouseY >= rowY    && Input.mouseY < rowY + btnRowH) {
+    gp.devDeathScreen = true;
+    return;
+  }
+
+  // "Credits" button
+  const crBtnX = rowX + btnW + btnGap;
+  if (Input.mouseX >= crBtnX && Input.mouseX < crBtnX + btnW &&
+      Input.mouseY >= rowY    && Input.mouseY < rowY + btnRowH) {
+    gp.devBossSelect      = false;
+    gp.devLaunchCredits   = true;
+    return;
+  }
+
+  // "Ending Animation" button below Gojo card
+  const gojoCardX = sx + 2 * (cardW + gap);
+  const btnH = 36, btnY = cy + cardH + 10;
+  if (Input.mouseX >= gojoCardX && Input.mouseX < gojoCardX + cardW &&
+      Input.mouseY >= btnY       && Input.mouseY < btnY + btnH) {
+    gp.devCinematicPicker = true;
+    return;
+  }
 
   _DEV_BOSSES.forEach((btn, i) => {
     if (!btn.ready) return;
@@ -5601,12 +6632,47 @@ function _updateDevBossSelect() {
   });
 }
 
+function _applyDevPowerUpgrade() {
+  const pw = gp.power;
+  switch (pw.id) {
+    case 'haki':         pw.upgraded = true; pw.hakiReflect       = true; break;
+    case 'timestop':     pw.upgraded = true; pw.timestopUpgraded  = true; break;
+    case 'ally_summon':  pw.upgraded = true; pw.allyUpgraded      = true; break;
+    case 'spin':         pw.upgraded = true; pw.spinUpgraded      = true; break;
+    case 'king_crimson': pw.upgraded = true; pw.kcUpgraded        = true; break;
+    case 'awakening':    pw.upgraded = true; pw.awakeningUpgraded = true; break;
+  }
+  // Re-init power state so cooldownMax and other init-time values reflect the upgrade
+  gp.powerState = _initPowerState(gp.power);
+}
+
+function _applyDevStatBoost() {
+  const charId   = gp.char.id;
+  const awakened = gp.power.id === 'awakening' && gp.power.awakeningUpgraded;
+  if (charId === 'kaido') {
+    const mult = awakened ? 1.60 : 1.30;
+    gp.char.stats.hp = Math.round(gp.char.stats.hp * mult);
+    gp.player.maxHp  = gp.char.stats.hp;
+    gp.player.hp     = gp.char.stats.hp;
+  } else if (charId === 'dio') {
+    const mult = awakened ? 1.60 : 1.30;
+    gp.char.stats.damage = Math.round(gp.char.stats.damage * mult);
+  } else {
+    const mult = awakened ? 1.50 : 1.25;
+    gp.char.stats.speed = Math.round(gp.char.stats.speed * 100 * mult) / 100;
+    gp.player.speed     = gp.char.stats.speed * 58;
+  }
+  // Full HP restore for all characters (mirrors normal floor 2 transition)
+  gp.player.hp = gp.player.maxHp;
+}
+
 function _launchDevBossFight(bossType) {
   gp.devBossSelect = false;
   gp.floor         = bossType === 'gojo' ? 3 : bossType === 'enel' ? 2 : 1;
   gp.roomIndex     = gp.rooms.length - 1;
   gp.rooms[gp.roomIndex] = 'boss';
   gp.enemies       = [];
+  gp.enemyBullets  = [];
   gp.projectiles   = [];
   gp.activeAttacks = [];
   gp.bossAttacks   = [];
@@ -5616,7 +6682,108 @@ function _launchDevBossFight(bossType) {
   gp.kaidoBreath   = { state: 'idle', chargeTimer: 0, fireTimer: 0, cooldownTimer: 0, dir: 'right', tickTimer: 0 };
   gp.player.x      = ROOM.x + 80;
   gp.player.y      = ROOM.y + ROOM.h / 2 - PH / 2;
+
+  // Silently apply upgrades matching what the player would have earned by this floor
+  if (bossType === 'enel' || bossType === 'gojo') _applyDevPowerUpgrade();
+  if (bossType === 'gojo') _applyDevStatBoost();
+
   _spawnBoss(bossType);
+}
+
+// ─── Dev cinematic picker ─────────────────────────────────────────────────────
+
+const _CIN_CHARS = [
+  { id: 'kaido', label: 'KAIDO', color: '#60a5fa' },
+  { id: 'dio',   label: 'DIO',   color: '#eab308' },
+  { id: 'levi',  label: 'LEVI',  color: '#4ade80' },
+];
+
+function _drawDevCinematicPicker(ctx) {
+  ctx.fillStyle = 'rgba(0,0,0,0.88)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.font      = 'bold 24px "Segoe UI Black", "Arial Black", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#c4b5fd';
+  ctx.shadowColor = '#a78bfa'; ctx.shadowBlur = 20;
+  ctx.fillText('ENDING ANIMATION — CHOOSE CHARACTER', W / 2, 100);
+  ctx.shadowBlur = 0;
+
+  ctx.font      = '14px "Segoe UI", sans-serif';
+  ctx.fillStyle = 'rgba(148,163,184,0.75)';
+  ctx.fillText('Preview the Gojo death cinematic for any character.  ESC to go back.', W / 2, 130);
+
+  const cardW = 200, cardH = 100, gap = 24;
+  const total = _CIN_CHARS.length * cardW + (_CIN_CHARS.length - 1) * gap;
+  const sx    = W / 2 - total / 2;
+  const cy    = H / 2 - cardH / 2;
+
+  _CIN_CHARS.forEach((ch, i) => {
+    const x     = sx + i * (cardW + gap);
+    const hover = Input.mouseX >= x && Input.mouseX < x + cardW &&
+                  Input.mouseY >= cy && Input.mouseY < cy + cardH;
+    ctx.save();
+    ctx.globalAlpha = hover ? 1 : 0.82;
+    ctx.fillStyle   = 'rgba(12,12,28,0.97)';
+    roundRect(ctx, x, cy, cardW, cardH, 10); ctx.fill();
+    ctx.strokeStyle = hover ? ch.color : 'rgba(80,80,120,0.5)';
+    ctx.lineWidth   = hover ? 2.5 : 1.5;
+    ctx.shadowColor = ch.color; ctx.shadowBlur = hover ? 20 : 0;
+    roundRect(ctx, x, cy, cardW, cardH, 10); ctx.stroke();
+    ctx.shadowBlur  = 0;
+    ctx.font        = 'bold 22px "Segoe UI Black", "Arial Black", sans-serif';
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = ch.color;
+    ctx.fillText(ch.label, x + cardW / 2, cy + 46);
+    ctx.font        = '13px "Segoe UI", sans-serif';
+    ctx.fillStyle   = 'rgba(200,200,220,0.78)';
+    ctx.fillText('[ WATCH ENDING ]', x + cardW / 2, cy + 70);
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  });
+}
+
+function _updateDevCinematicPicker() {
+  if (Input.justPressed('Escape')) {
+    gp.devCinematicPicker = false;
+    return;
+  }
+  if (!Input.clicked) return;
+
+  const cardW = 200, cardH = 100, gap = 24;
+  const total = _CIN_CHARS.length * cardW + (_CIN_CHARS.length - 1) * gap;
+  const sx    = W / 2 - total / 2;
+  const cy    = H / 2 - cardH / 2;
+
+  _CIN_CHARS.forEach((ch, i) => {
+    const x = sx + i * (cardW + gap);
+    if (Input.mouseX >= x && Input.mouseX < x + cardW &&
+        Input.mouseY >= cy && Input.mouseY < cy + cardH) {
+      _launchDevCinematic(ch.id);
+    }
+  });
+}
+
+function _launchDevCinematic(charId) {
+  const char  = CHARACTERS.find(c => c.id === charId);
+  const power = POWERS.find(p => p.id === 'haki') || POWERS[0]; // placeholder power
+  gp.devCinematicPicker = false;
+  gp.devBossSelect      = false;
+  gp.char               = char;
+  gp.power              = power;
+  // Spawn a dead Gojo boss so asset references work
+  _spawnBoss('gojo');
+  gp.boss.isDead      = true;
+  gp.boss.hp          = 0;
+  gp.player.x         = ROOM.x + Math.floor(ROOM.w * 0.18);
+  gp.player.y         = ROOM.y + ROOM.h / 2 - PH / 2;
+  gp.floor            = 3;
+  gp.bossAttacks      = [];
+  gp.projectiles      = [];
+  gp.activeAttacks    = [];
+  gp.kaidoBreath      = { state: 'idle', chargeTimer: 0, fireTimer: 0, cooldownTimer: 0, dir: 'right', tickTimer: 0 };
+  gp.powerState       = _initPowerState(power, char);
+  _startGojoCinematic();
 }
 
 // ─── Skull icon helper (boss door indicator) ─────────────────────────────────
